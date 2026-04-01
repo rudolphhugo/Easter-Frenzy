@@ -30,20 +30,23 @@ function getDifficulty(elapsed: number) {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CANDIES          = ["🍎", "🍊", "🍋", "🍇", "🍓", "🍌"]
-const SHINY_CHANCE     = 0.08
-const SHINY_VALUE      = 10
-const POWERUP_CHANCE   = 0.03
-const SLOW_DURATION    = 4          // seconds
-const SLOW_MULT        = 0.35
-const FRENZY_INTERVAL  = 40         // seconds between frenzies
-const FRENZY_DURATION  = 5          // seconds
-const MILESTONES       = [10, 30, 60, 90, 120, 180, 240]
-const MOUTH_OPEN_RATIO = 0.28
-const CATCH_RADIUS     = 52
-const EGG_SIZE         = 64
-const EMOJI_SIZE       = 48
-const HS_KEY           = "easter-frenzy-highscore"
+const CANDIES               = ["🍎", "🍊", "🍋", "🍇", "🍓", "🍌"]
+const SHINY_CHANCE          = 0.08
+const SHINY_TIME            = 5           // seconds added on golden egg catch
+const POWERUP_CHANCE        = 0.03
+const SLOW_DURATION         = 4           // seconds
+const SLOW_MULT             = 0.35
+const FRENZY_INTERVAL       = 40          // seconds between frenzies
+const FRENZY_DURATION       = 5           // seconds
+const MILESTONES            = [10, 30, 60, 90, 120, 180, 240]
+const START_TIME            = 90          // seconds on the clock at game start
+const SCORE_TIME_THRESHOLD  = 50          // every N points adds bonus time
+const SCORE_TIME_BONUS      = 10          // seconds added per threshold crossed
+const MOUTH_OPEN_RATIO      = 0.28
+const CATCH_RADIUS          = 52
+const EGG_SIZE              = 64
+const EMOJI_SIZE            = 48
+const HS_KEY                = "easter-frenzy-highscore"
 
 // ─── Sound effects ────────────────────────────────────────────────────────────
 
@@ -122,7 +125,7 @@ function getMouthInfo(lms: { x: number; y: number }[], w: number, h: number) {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ScorePopup { id: number; value: number }
+interface ScorePopup { id: number; label: string; isTime?: boolean }
 interface Callout    { id: number; text: string; type: "milestone" | "frenzy" }
 
 interface Fruit {
@@ -148,24 +151,27 @@ export function EasterFrenzy() {
   const audioCtxRef = useRef<AudioContext | null>(null)
 
   // Game refs
-  const fruitsRef           = useRef<Fruit[]>([])
-  const livesRef            = useRef(3)
-  const scoreRef            = useRef(0)
-  const gameTimeRef         = useRef(0)
-  const lastTimeRef         = useRef(0)
-  const nextFruitId         = useRef(0)
-  const gameStateRef        = useRef<GameState>("idle")
-  const spawnCoolRef        = useRef(0)
-  const milestonesShownRef  = useRef<Set<number>>(new Set())
-  const slowEndTimeRef      = useRef(0)
-  const frenzyEndTimeRef    = useRef(0)
-  const nextFrenzyTimeRef   = useRef(FRENZY_INTERVAL)
-  const calloutTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fruitsRef             = useRef<Fruit[]>([])
+  const livesRef              = useRef(3)
+  const scoreRef              = useRef(0)
+  const timeLeftRef           = useRef(START_TIME)
+  const lastScoreMilestone    = useRef(0)
+  const gameTimeRef           = useRef(0)
+  const lastTimeRef           = useRef(0)
+  const nextFruitId           = useRef(0)
+  const gameStateRef          = useRef<GameState>("idle")
+  const spawnCoolRef          = useRef(0)
+  const milestonesShownRef    = useRef<Set<number>>(new Set())
+  const slowEndTimeRef        = useRef(0)
+  const frenzyEndTimeRef      = useRef(0)
+  const nextFrenzyTimeRef     = useRef(FRENZY_INTERVAL)
+  const calloutTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // React state
   const [gameState, setGameState]     = useState<GameState>("idle")
   const [lives, setLives]             = useState(3)
   const [score, setScore]             = useState(0)
+  const [timeLeft, setTimeLeft]       = useState(START_TIME)
   const [highScore, setHighScore]     = useState(0)
   const [gameTime, setGameTime]       = useState(0)
   const [countdown, setCountdown]     = useState(3)
@@ -266,8 +272,19 @@ export function EasterFrenzy() {
 
     if (gameStateRef.current === "playing") {
       gameTimeRef.current += dt
+      timeLeftRef.current = Math.max(0, timeLeftRef.current - dt)
       const elapsed = gameTimeRef.current
       setGameTime(Math.floor(elapsed))
+      setTimeLeft(Math.ceil(timeLeftRef.current))
+
+      // ── Time up ──────────────────────────────────────────────────────────
+      if (timeLeftRef.current <= 0) {
+        gameStateRef.current = "gameover"; setGameState("gameover")
+        const final = scoreRef.current
+        const prev  = parseInt(localStorage.getItem(HS_KEY) || "0")
+        if (final > prev) { localStorage.setItem(HS_KEY, String(final)); setHighScore(final) }
+        rafRef.current = requestAnimationFrame(runLoop); return
+      }
 
       // ── Milestone callouts ───────────────────────────────────────────────
       for (const m of MILESTONES) {
@@ -347,12 +364,32 @@ export function EasterFrenzy() {
             } else if (fruit.isPowerup) {
               slowEndTimeRef.current = elapsed + SLOW_DURATION
               setSlowActive(true)
-            } else {
-              const pts = (fruit.isShiny ? SHINY_VALUE : 1) * (isFrenzy ? 2 : 1)
-              scoreRef.current += pts; setScore(scoreRef.current)
+            } else if (fruit.isShiny) {
+              // Golden egg: add time instead of points
+              timeLeftRef.current += SHINY_TIME
+              setTimeLeft(Math.ceil(timeLeftRef.current))
               const popupId = nextFruitId.current++
-              setScorePopups(prev => [...prev, { id: popupId, value: pts }])
-              setTimeout(() => setScorePopups(prev => prev.filter(p => p.id !== popupId)), 800)
+              setScorePopups(prev => [...prev, { id: popupId, label: `+${SHINY_TIME}s`, isTime: true }])
+              setTimeout(() => setScorePopups(prev => prev.filter(p => p.id !== popupId)), 900)
+            } else {
+              const pts = isFrenzy ? 2 : 1
+              scoreRef.current += pts; setScore(scoreRef.current)
+              // Check 50-pt time bonus milestone
+              const tier = Math.floor(scoreRef.current / SCORE_TIME_THRESHOLD)
+              if (tier > lastScoreMilestone.current) {
+                lastScoreMilestone.current = tier
+                timeLeftRef.current += SCORE_TIME_BONUS
+                setTimeLeft(Math.ceil(timeLeftRef.current))
+                triggerCallout(`+${SCORE_TIME_BONUS}s! ⏰`, "milestone")
+                if (audioCtxRef.current) playShinyCatch(audioCtxRef.current)
+                const popupId = nextFruitId.current++
+                setScorePopups(prev => [...prev, { id: popupId, label: `+${SCORE_TIME_BONUS}s`, isTime: true }])
+                setTimeout(() => setScorePopups(prev => prev.filter(p => p.id !== popupId)), 900)
+              } else {
+                const popupId = nextFruitId.current++
+                setScorePopups(prev => [...prev, { id: popupId, label: `+${pts}` }])
+                setTimeout(() => setScorePopups(prev => prev.filter(p => p.id !== popupId)), 800)
+              }
             }
 
           } else {
@@ -461,12 +498,13 @@ export function EasterFrenzy() {
   const startGame = useCallback(() => {
     fruitsRef.current = []; setScorePopups([])
     livesRef.current = 3; scoreRef.current = 0; gameTimeRef.current = 0
+    timeLeftRef.current = START_TIME; lastScoreMilestone.current = 0
     spawnCoolRef.current = 0; lastTimeRef.current = 0; nextFruitId.current = 0
     milestonesShownRef.current = new Set()
     slowEndTimeRef.current = 0; frenzyEndTimeRef.current = 0
     nextFrenzyTimeRef.current = FRENZY_INTERVAL
     if (calloutTimerRef.current) clearTimeout(calloutTimerRef.current)
-    setLives(3); setScore(0); setGameTime(0)
+    setLives(3); setScore(0); setGameTime(0); setTimeLeft(START_TIME)
     setCallout(null); setFrenzyActive(false); setSlowActive(false)
     setCountdown(3); setGameState("countdown"); gameStateRef.current = "countdown"
     let count = 3
@@ -559,11 +597,16 @@ export function EasterFrenzy() {
               ))}
             </div>
             <div className="flex-1 flex flex-col items-center gap-0.5">
-              <span className="text-2xl font-black text-white tabular-nums leading-none">{score}</span>
+              <span
+                className="text-2xl font-black tabular-nums leading-none transition-colors duration-300"
+                style={{ color: timeLeft <= 10 ? "#f87171" : timeLeft <= 20 ? "#fb923c" : "white" }}
+              >
+                {timeLeft}s
+              </span>
               {frenzyActive && <span className="text-xs font-bold text-pink-300 uppercase tracking-widest">2× frenzy</span>}
               {slowActive && !frenzyActive && <span className="text-xs font-bold text-cyan-300 uppercase tracking-widest">🐢 slow</span>}
             </div>
-            <span className="text-base font-bold text-white/60 tabular-nums w-16 text-right">{gameTime}s</span>
+            <span className="text-base font-black text-white tabular-nums w-16 text-right">{score}</span>
           </div>
         )}
 
@@ -575,20 +618,20 @@ export function EasterFrenzy() {
               className="absolute inset-0 flex items-center justify-center pointer-events-none z-20"
               initial={{ opacity: 1, y: 0, scale: 0.7 }}
               animate={{ opacity: 0, y: -100, scale: 1.3 }}
-              transition={{ duration: popup.value > 1 ? 0.9 : 0.75, ease: "easeOut" }}
+              transition={{ duration: popup.isTime ? 1.0 : 0.75, ease: "easeOut" }}
             >
               <span
                 className="font-black leading-none"
                 style={{
-                  fontSize: popup.value >= 20 ? 130 : popup.value > 1 ? 120 : 96,
+                  fontSize: popup.isTime ? 110 : popup.label === "+2" ? 96 : 96,
                   fontFamily: "var(--font-nunito)",
-                  color: popup.value >= 20 ? "#fde047" : popup.value > 1 ? "#fbbf24" : "#4ade80",
-                  textShadow: popup.value > 1
-                    ? "0 0 40px rgba(255,215,0,0.95), 0 0 80px rgba(255,215,0,0.5)"
+                  color: popup.isTime ? "#34d399" : "#4ade80",
+                  textShadow: popup.isTime
+                    ? "0 0 40px rgba(52,211,153,0.95), 0 0 80px rgba(52,211,153,0.5)"
                     : "0 0 32px rgba(74,222,128,0.9)",
                 }}
               >
-                +{popup.value}
+                {popup.label}
               </span>
             </motion.div>
           ))}
@@ -625,7 +668,7 @@ export function EasterFrenzy() {
                   Easter <span className="text-pink-400">Frenzy</span>
                 </h1>
                 <p className="text-white text-lg max-w-sm mx-auto text-center">
-                  Catch eggs to score — avoid fruit or lose a life. Survive as long as you can!
+                  Catch eggs to score — avoid fruit or lose a life. 90 seconds on the clock!
                 </p>
                 {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>}
               </div>
@@ -651,7 +694,7 @@ export function EasterFrenzy() {
             <div className="text-center">
               <h2 className="text-5xl text-white mb-2" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
               <p className="text-white text-xl">Catch eggs — avoid fruit!</p>
-              <p className="text-white/70 text-lg mt-1">3 lives · ✨ Shiny = 10pts · 🐢 Slow power-up</p>
+              <p className="text-white/70 text-lg mt-1">90s · 3 lives · ✨ Golden egg = +5s · Every 50pts = +10s</p>
               {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>}
             </div>
             <button onClick={startGame}
@@ -670,7 +713,7 @@ export function EasterFrenzy() {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/60 pointer-events-none">
             <div className="text-center">
               <p className="text-white text-base font-bold uppercase tracking-widest mb-1">Survive!</p>
-              <p className="text-white/60 text-sm">3 lives · shiny eggs ✨ = 10pts · 🐢 slows everything · FRENZY every 40s</p>
+              <p className="text-white/60 text-sm">90s · 3 lives · ✨ golden = +5s · 50pts = +10s · FRENZY every 40s</p>
             </div>
             <span key={countdown} className="text-[120px] font-black text-white drop-shadow-lg animate-ping"
               style={{ animationDuration: "0.9s", animationIterationCount: 1 }}>

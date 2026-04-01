@@ -668,7 +668,7 @@ export function EasterFrenzy() {
                   Easter <span className="text-pink-400">Frenzy</span>
                 </h1>
                 <p className="text-white text-lg max-w-sm mx-auto text-center">
-                  Catch eggs to score — avoid fruit or lose a life. 90 seconds on the clock!
+                  Catch eggs to score — avoid fruit or lose a life.
                 </p>
                 {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>}
               </div>

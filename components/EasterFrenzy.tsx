@@ -694,7 +694,7 @@ export function EasterFrenzy() {
             <div className="text-center">
               <h2 className="text-5xl text-white mb-2" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
               <p className="text-white text-xl">Catch eggs — avoid fruit!</p>
-              <p className="text-white/70 text-lg mt-1">90s · 3 lives · ✨ Golden egg = +5s · Every 50pts = +10s</p>
+              <p className="text-white/70 text-lg mt-1">90s · 3 lives</p>
               {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>}
             </div>
             <button onClick={startGame}

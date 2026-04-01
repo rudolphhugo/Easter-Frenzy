@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Camera, RefreshCw, ChevronRight, RotateCcw, LogOut } from "lucide-react"
+import { Camera, RefreshCw, LogOut } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 
 // ─── Egg image pools (one per color, 6 variants each) ────────────────────────
@@ -13,122 +13,48 @@ const EGG_POOL: Record<string, string[]> = {
   blue:   Array.from({ length: 6 }, (_, i) => `/eggs/egg-blue-${i}.png`),
   purple: Array.from({ length: 6 }, (_, i) => `/eggs/egg-purple-${i}.png`),
 }
+const ALL_EGG_COLORS = Object.keys(EGG_POOL)
+const ALL_EGG_SRCS   = Object.values(EGG_POOL).flat()
 
-const ALL_EGG_SRCS = Object.values(EGG_POOL).flat()
+// ─── Difficulty (driven by elapsed seconds) ───────────────────────────────────
 
-// ─── Stage Definitions ────────────────────────────────────────────────────────
+function getDifficulty(elapsed: number) {
+  const t = Math.min(elapsed / 120, 1)   // fully ramped at 2 minutes
+  return {
+    speed:       1.5 + t * 3.5,           // 1.5 → 5.0
+    maxFruits:   Math.round(1 + t * 6),   // 1 → 7
+    candyChance: 0.15 + t * 0.20,         // 15% → 35%
+    spawnCool:   0.9 - t * 0.5,           // 0.9s → 0.4s cooldown
+  }
+}
 
-const STAGES = [
-  {
-    name: "Egg Hunt Beginners",
-    emoji: "🥚",
-    tagline: "One egg at a time",
-    eggColors: ["yellow"],
-    target: 5,
-    timeLimit: 30,
-    baseSpeed: 1.6,
-    maxFruits: 1,
-    color: "#f9a8d4",
-  },
-  {
-    name: "Chick Chase",
-    emoji: "🐣",
-    tagline: "They're hatching fast!",
-    eggColors: ["yellow", "pink"],
-    target: 8,
-    timeLimit: 35,
-    baseSpeed: 2.1,
-    maxFruits: 2,
-    color: "#fde68a",
-  },
-  {
-    name: "Bunny Scramble",
-    emoji: "🐰",
-    tagline: "The bunnies are loose",
-    eggColors: ["yellow", "pink", "green"],
-    target: 10,
-    timeLimit: 35,
-    baseSpeed: 2.6,
-    maxFruits: 3,
-    color: "#a5f3fc",
-  },
-  {
-    name: "Spring Fling",
-    emoji: "🌷",
-    tagline: "Blooming chaos",
-    eggColors: ["yellow", "pink", "green", "blue"],
-    target: 12,
-    timeLimit: 40,
-    baseSpeed: 3.2,
-    maxFruits: 5,
-    color: "#86efac",
-  },
-  {
-    name: "Easter Egg Madness",
-    emoji: "🎉",
-    tagline: "The ultimate egg frenzy",
-    eggColors: ["yellow", "pink", "green", "blue", "purple"],
-    target: 15,
-    timeLimit: 45,
-    baseSpeed: 4.0,
-    maxFruits: 7,
-    color: "#c4b5fd",
-  },
-]
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// Penalty items: fruits (don't eat these on Easter!)
-const CANDIES = ["🍎", "🍊", "🍋", "🍇", "🍓", "🍌"]
-const CANDY_CHANCE = 0.2
+const CANDIES       = ["🍎", "🍊", "🍋", "🍇", "🍓", "🍌"]
+const SHINY_CHANCE  = 0.08
+const SHINY_VALUE   = 10
 const MOUTH_OPEN_RATIO = 0.28
-const CATCH_RADIUS = 52
-const EGG_SIZE = 64      // PNG eggs rendered at this size
-const EMOJI_SIZE = 48    // penalty emoji font size
+const CATCH_RADIUS  = 52
+const EGG_SIZE      = 64
+const EMOJI_SIZE    = 48
+const HS_KEY        = "easter-frenzy-highscore"
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface ScorePopup {
-  id: number
-  value: number   // +1 or -1
-}
-
-interface Fruit {
-  id: number
-  imageSrc: string | null  // PNG path for eggs; null for penalty emoji
-  emoji: string            // only used when imageSrc is null
-  x: number
-  y: number
-  speed: number
-  wobble: number
-  wobbleAmp: number
-  eaten: boolean
-  eatAnim: number
-  isCandy: boolean
-}
-
-type GameState = "idle" | "countdown" | "playing" | "stage_complete" | "failed" | "victory"
-
-// ─── Sound effects (Web Audio API synthesis) ─────────────────────────────────
+// ─── Sound effects ────────────────────────────────────────────────────────────
 
 function playChomp(ctx: AudioContext) {
   const t = ctx.currentTime
   const bufLen = Math.floor(ctx.sampleRate * 0.07)
   const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate)
   const data = buf.getChannelData(0)
-  for (let i = 0; i < bufLen; i++) {
-    data[i] = (Math.random() * 2 - 1) * (1 - i / bufLen)
-  }
+  for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufLen)
   const noise = ctx.createBufferSource()
   noise.buffer = buf
   const filter = ctx.createBiquadFilter()
-  filter.type = "bandpass"
-  filter.frequency.value = 1000
-  filter.Q.value = 1.2
+  filter.type = "bandpass"; filter.frequency.value = 1000; filter.Q.value = 1.2
   const gain = ctx.createGain()
   gain.gain.setValueAtTime(0.6, t)
   gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07)
-  noise.connect(filter)
-  filter.connect(gain)
-  gain.connect(ctx.destination)
+  noise.connect(filter); filter.connect(gain); gain.connect(ctx.destination)
   noise.start(t)
 }
 
@@ -138,35 +64,57 @@ function playBlah(ctx: AudioContext) {
   osc.type = "sawtooth"
   osc.frequency.setValueAtTime(230, t)
   osc.frequency.exponentialRampToValueAtTime(75, t + 0.38)
-  const lfo = ctx.createOscillator()
-  lfo.frequency.value = 9
-  const lfoGain = ctx.createGain()
-  lfoGain.gain.value = 18
-  lfo.connect(lfoGain)
-  lfoGain.connect(osc.frequency)
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 9
+  const lfoGain = ctx.createGain(); lfoGain.gain.value = 18
+  lfo.connect(lfoGain); lfoGain.connect(osc.frequency)
   const gain = ctx.createGain()
   gain.gain.setValueAtTime(0.2, t)
   gain.gain.exponentialRampToValueAtTime(0.001, t + 0.42)
-  osc.connect(gain)
-  gain.connect(ctx.destination)
-  lfo.start(t)
-  osc.start(t)
-  lfo.stop(t + 0.42)
-  osc.stop(t + 0.42)
+  osc.connect(gain); gain.connect(ctx.destination)
+  lfo.start(t); osc.start(t); lfo.stop(t + 0.42); osc.stop(t + 0.42)
+}
+
+function playShinyCatch(ctx: AudioContext) {
+  const t = ctx.currentTime
+  for (const [freq, delay] of [[880, 0], [1320, 0.1]] as [number, number][]) {
+    const osc = ctx.createOscillator()
+    osc.type = "sine"; osc.frequency.value = freq
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0, t + delay)
+    gain.gain.linearRampToValueAtTime(0.3, t + delay + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.25)
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.start(t + delay); osc.stop(t + delay + 0.3)
+  }
 }
 
 // ─── Mouth helpers ────────────────────────────────────────────────────────────
 
 function getMouthInfo(lms: { x: number; y: number }[], w: number, h: number) {
-  const ul = lms[13], ll = lms[14]
-  const ml = lms[61], mr = lms[291]
-  const gapY = Math.abs(ll.y - ul.y) * h
+  const ul = lms[13], ll = lms[14], ml = lms[61], mr = lms[291]
+  const gapY  = Math.abs(ll.y - ul.y) * h
   const width = Math.abs(mr.x - ml.x) * w
   const ratio = width > 0 ? gapY / width : 0
   const cx = ((ml.x + mr.x) / 2) * w
   const cy = ((ul.y + ll.y) / 2) * h
   return { cx, cy, ratio }
 }
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ScorePopup { id: number; value: number }
+
+interface Fruit {
+  id: number
+  imageSrc: string | null
+  emoji: string
+  x: number; y: number
+  speed: number; wobble: number; wobbleAmp: number
+  eaten: boolean; eatAnim: number
+  isCandy: boolean; isShiny: boolean
+}
+
+type GameState = "idle" | "countdown" | "playing" | "gameover"
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -176,63 +124,65 @@ export function EasterFrenzy() {
   const streamRef   = useRef<MediaStream | null>(null)
   const detectorRef = useRef<any>(null)
   const rafRef      = useRef<number>(0)
-  const imgCacheRef  = useRef<Map<string, HTMLImageElement>>(new Map())
-  const audioCtxRef  = useRef<AudioContext | null>(null)
+  const imgCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
+  const audioCtxRef = useRef<AudioContext | null>(null)
 
   // Game refs (rAF loop — no stale closures)
-  const fruitsRef          = useRef<Fruit[]>([])
-  const stageFruitsRef     = useRef(0)
-  const totalScoreRef      = useRef(0)
-  const currentStageRef    = useRef(0)
-  const timerRef           = useRef(0)
-  const lastTimeRef        = useRef(0)
-  const nextFruitId        = useRef(0)
-  const gameStateRef       = useRef<GameState>("idle")
-  const spawnCoolRef       = useRef(0)
-  const completedStagesRef = useRef<boolean[]>([false, false, false, false, false])
+  const fruitsRef      = useRef<Fruit[]>([])
+  const livesRef       = useRef(3)
+  const scoreRef       = useRef(0)
+  const gameTimeRef    = useRef(0)
+  const lastTimeRef    = useRef(0)
+  const nextFruitId    = useRef(0)
+  const gameStateRef   = useRef<GameState>("idle")
+  const spawnCoolRef   = useRef(0)
 
   // React state (UI)
-  const [gameState, setGameState]             = useState<GameState>("idle")
-  const [stageFruits, setStageFruits]         = useState(0)
-  const [totalScore, setTotalScore]           = useState(0)
-  const [currentStage, setCurrentStage]       = useState(0)
-  const [timeLeft, setTimeLeft]               = useState(0)
-  const [countdown, setCountdown]             = useState(3)
-  const [cameraReady, setCameraReady]         = useState(false)
-  const [loadingModel, setLoadingModel]       = useState(false)
-  const [completedStages, setCompletedStages] = useState<boolean[]>([false, false, false, false, false])
-  const [scorePopups, setScorePopups]         = useState<{ id: number; value: number }[]>([])
+  const [gameState, setGameState]     = useState<GameState>("idle")
+  const [lives, setLives]             = useState(3)
+  const [score, setScore]             = useState(0)
+  const [highScore, setHighScore]     = useState(0)
+  const [gameTime, setGameTime]       = useState(0)
+  const [countdown, setCountdown]     = useState(3)
+  const [cameraReady, setCameraReady] = useState(false)
+  const [loadingModel, setLoadingModel] = useState(false)
+  const [scorePopups, setScorePopups] = useState<ScorePopup[]>([])
+  const [lifeFlash, setLifeFlash]     = useState(false)
+
+  // Load high score from localStorage on mount
+  useEffect(() => {
+    const saved = parseInt(localStorage.getItem(HS_KEY) || "0")
+    if (saved > 0) setHighScore(saved)
+  }, [])
 
   // ── Spawn ──────────────────────────────────────────────────────────────────
   const spawnFruit = useCallback((canvas: HTMLCanvasElement) => {
-    const stage = STAGES[currentStageRef.current]
-    const isCandy = Math.random() < CANDY_CHANCE
-    const speed = stage.baseSpeed * (0.8 + Math.random() * 0.4)
-    const spawnSize = isCandy ? EMOJI_SIZE : EGG_SIZE
+    const diff = getDifficulty(gameTimeRef.current)
+    const isCandy = Math.random() < diff.candyChance
+    const speed   = diff.speed * (0.8 + Math.random() * 0.4)
+    const isShiny = !isCandy && Math.random() < SHINY_CHANCE
+    const spawnSz = isCandy ? EMOJI_SIZE : EGG_SIZE
 
     let imageSrc: string | null = null
     let emoji = ""
-
     if (isCandy) {
       emoji = CANDIES[Math.floor(Math.random() * CANDIES.length)]
     } else {
-      const colorName = stage.eggColors[Math.floor(Math.random() * stage.eggColors.length)]
+      const colorName = ALL_EGG_COLORS[Math.floor(Math.random() * ALL_EGG_COLORS.length)]
       const pool = EGG_POOL[colorName]
       imageSrc = pool[Math.floor(Math.random() * pool.length)]
     }
 
     fruitsRef.current.push({
       id: nextFruitId.current++,
-      imageSrc,
-      emoji,
-      x: spawnSize + Math.random() * (canvas.width - spawnSize * 2),
-      y: -spawnSize,
+      imageSrc, emoji,
+      x: spawnSz + Math.random() * (canvas.width - spawnSz * 2),
+      y: -spawnSz,
       speed,
       wobble: Math.random() * Math.PI * 2,
       wobbleAmp: 20 + Math.random() * 30,
-      eaten: false,
-      eatAnim: 0,
-      isCandy,
+      eaten: false, eatAnim: 0,
+      isCandy, isShiny,
     })
   }, [])
 
@@ -251,65 +201,50 @@ export function EasterFrenzy() {
 
     canvas.width  = video.videoWidth  || 640
     canvas.height = video.videoHeight || 480
-    const W = canvas.width
-    const H = canvas.height
+    const W = canvas.width, H = canvas.height
 
     // Mirror webcam
-    ctx.save()
-    ctx.scale(-1, 1)
-    ctx.drawImage(video, -W, 0, W, H)
-    ctx.restore()
+    ctx.save(); ctx.scale(-1, 1); ctx.drawImage(video, -W, 0, W, H); ctx.restore()
 
     // Face detection
     const result = detectorRef.current.detectForVideo(video, ts)
-    let mouthOpen = false
-    let mouthX = W / 2
-    let mouthY = H * 0.65
+    let mouthOpen = false, mouthX = W / 2, mouthY = H * 0.65
 
     if (result.faceLandmarks?.length > 0) {
-      const lms = result.faceLandmarks[0]
+      const lms      = result.faceLandmarks[0]
       const mirrored = lms.map((l: any) => ({ x: 1 - l.x, y: l.y }))
-      const info = getMouthInfo(mirrored, W, H)
-      mouthX = info.cx
-      mouthY = info.cy
+      const info     = getMouthInfo(mirrored, W, H)
+      mouthX = info.cx; mouthY = info.cy
       mouthOpen = info.ratio > MOUTH_OPEN_RATIO
 
       const ringColor = mouthOpen ? "rgba(74,222,128,0.85)" : "rgba(255,255,255,0.35)"
       ctx.beginPath()
       ctx.arc(mouthX, mouthY, CATCH_RADIUS, 0, Math.PI * 2)
       ctx.strokeStyle = ringColor
-      ctx.lineWidth = mouthOpen ? 3 : 1.5
+      ctx.lineWidth   = mouthOpen ? 3 : 1.5
       ctx.setLineDash(mouthOpen ? [] : [6, 4])
-      ctx.stroke()
-      ctx.setLineDash([])
+      ctx.stroke(); ctx.setLineDash([])
 
       if (mouthOpen) {
         ctx.beginPath()
         ctx.arc(mouthX, mouthY, 6, 0, Math.PI * 2)
-        ctx.fillStyle = "rgba(74,222,128,0.9)"
-        ctx.fill()
+        ctx.fillStyle = "rgba(74,222,128,0.9)"; ctx.fill()
       }
     }
 
-    // ── Game logic ────────────────────────────────────────────────────────────
+    // ── Game logic ─────────────────────────────────────────────────────────
     if (gameStateRef.current === "playing") {
-      const stage = STAGES[currentStageRef.current]
+      gameTimeRef.current += dt
+      setGameTime(Math.floor(gameTimeRef.current))
 
-      // Timer
-      timerRef.current -= dt
-      if (timerRef.current <= 0) {
-        timerRef.current = 0
-        gameStateRef.current = "failed"
-        setGameState("failed")
-      }
-      setTimeLeft(Math.ceil(timerRef.current))
+      const diff = getDifficulty(gameTimeRef.current)
 
       // Spawn
       spawnCoolRef.current -= dt
       const active = fruitsRef.current.filter(f => !f.eaten && f.y < H).length
-      if (active < stage.maxFruits && spawnCoolRef.current <= 0) {
+      if (active < diff.maxFruits && spawnCoolRef.current <= 0) {
         spawnFruit(canvas)
-        spawnCoolRef.current = 0.6 + Math.random() * 0.4
+        spawnCoolRef.current = diff.spawnCool * (0.7 + Math.random() * 0.6)
       }
 
       fruitsRef.current = fruitsRef.current.filter(f => f.y < H + 80 || f.eatAnim > 0)
@@ -321,61 +256,78 @@ export function EasterFrenzy() {
           fruit.y += fruit.speed * dt * 60
           fruit.wobble += dt * 1.2
           const fx = fruit.x + Math.sin(fruit.wobble) * fruit.wobbleAmp
-
-          const dx = fx - mouthX
-          const dy = fruit.y - mouthY
+          const dx = fx - mouthX, dy = fruit.y - mouthY
           const dist = Math.sqrt(dx * dx + dy * dy)
 
           if (dist < CATCH_RADIUS && mouthOpen) {
-            fruit.eaten = true
-            fruit.eatAnim = 1
-            if (audioCtxRef.current) {
-              fruit.isCandy
-                ? playBlah(audioCtxRef.current)
-                : playChomp(audioCtxRef.current)
-            }
-            if (fruit.isCandy) {
-              stageFruitsRef.current = Math.max(0, stageFruitsRef.current - 1)
-              totalScoreRef.current = Math.max(0, totalScoreRef.current - 1)
-            } else {
-              stageFruitsRef.current += 1
-              totalScoreRef.current += 1
-            }
-            setStageFruits(stageFruitsRef.current)
-            setTotalScore(totalScoreRef.current)
-            const popupId = nextFruitId.current++
-            const popupValue = fruit.isCandy ? -1 : 1
-            setScorePopups(prev => [...prev, { id: popupId, value: popupValue }])
-            setTimeout(() => setScorePopups(prev => prev.filter(p => p.id !== popupId)), 750)
+            fruit.eaten = true; fruit.eatAnim = 1
 
-            if (!fruit.isCandy && stageFruitsRef.current >= stage.target) {
-              completedStagesRef.current[currentStageRef.current] = true
-              setCompletedStages([...completedStagesRef.current])
-              const isLast = currentStageRef.current >= STAGES.length - 1
-              const nextState = isLast ? "victory" : "stage_complete"
-              gameStateRef.current = nextState
-              setGameState(nextState)
+            // Sound
+            const audio = audioCtxRef.current
+            if (audio) {
+              if (fruit.isShiny) playShinyCatch(audio)
+              else if (!fruit.isCandy) playChomp(audio)
+              else playBlah(audio)
+            }
+
+            if (fruit.isCandy) {
+              // Lose a life
+              livesRef.current -= 1
+              setLives(livesRef.current)
+              setLifeFlash(true)
+              setTimeout(() => setLifeFlash(false), 350)
+
+              if (livesRef.current <= 0) {
+                gameStateRef.current = "gameover"
+                setGameState("gameover")
+                const final = scoreRef.current
+                const prev  = parseInt(localStorage.getItem(HS_KEY) || "0")
+                if (final > prev) {
+                  localStorage.setItem(HS_KEY, String(final))
+                  setHighScore(final)
+                }
+              }
+            } else {
+              const pts = fruit.isShiny ? SHINY_VALUE : 1
+              scoreRef.current += pts
+              setScore(scoreRef.current)
+              const popupId = nextFruitId.current++
+              setScorePopups(prev => [...prev, { id: popupId, value: pts }])
+              setTimeout(() => setScorePopups(prev => prev.filter(p => p.id !== popupId)), 800)
             }
           } else {
+            // Draw fruit
             ctx.save()
-            ctx.shadowColor = "rgba(0,0,0,0.4)"
-            ctx.shadowBlur = 10
+            ctx.shadowColor = fruit.isShiny ? "rgba(255,215,0,0.95)" : "rgba(0,0,0,0.4)"
+            ctx.shadowBlur  = fruit.isShiny ? 24 : 10
             if (fruit.imageSrc) {
               const img = imgCacheRef.current.get(fruit.imageSrc)
               if (img) ctx.drawImage(img, fx - size / 2, fruit.y - size / 2, size, size)
             } else {
               ctx.font = `${size}px serif`
-              ctx.textAlign = "center"
-              ctx.textBaseline = "middle"
+              ctx.textAlign = "center"; ctx.textBaseline = "middle"
               ctx.fillText(fruit.emoji, fx, fruit.y)
             }
             ctx.restore()
+
+            // Orbiting gold sparkles for shiny eggs
+            if (fruit.isShiny) {
+              for (let i = 0; i < 4; i++) {
+                const angle = fruit.wobble * 2.5 + (i / 4) * Math.PI * 2
+                const r = size * 0.7
+                ctx.save()
+                ctx.beginPath()
+                ctx.arc(fx + Math.cos(angle) * r, fruit.y + Math.sin(angle) * r, 4, 0, Math.PI * 2)
+                ctx.fillStyle = "rgba(255,215,0,1)"
+                ctx.shadowColor = "rgba(255,215,0,0.9)"; ctx.shadowBlur = 8
+                ctx.fill(); ctx.restore()
+              }
+            }
           }
 
         } else if (fruit.eatAnim > 0) {
           fruit.eatAnim -= dt * 3
-          const t = 1 - fruit.eatAnim
-          const scale = 1 + t * 1.5
+          const scale = 1 + (1 - fruit.eatAnim) * 1.5
           ctx.save()
           ctx.globalAlpha = fruit.eatAnim
           ctx.translate(fruit.x + Math.sin(fruit.wobble) * fruit.wobbleAmp, fruit.y)
@@ -385,28 +337,28 @@ export function EasterFrenzy() {
             if (img) ctx.drawImage(img, -size / 2, -size / 2, size, size)
           } else {
             ctx.font = `${size}px serif`
-            ctx.textAlign = "center"
-            ctx.textBaseline = "middle"
+            ctx.textAlign = "center"; ctx.textBaseline = "middle"
             ctx.fillText(fruit.emoji, 0, 0)
           }
-          ctx.globalAlpha = 1
-          ctx.restore()
+          ctx.globalAlpha = 1; ctx.restore()
 
           if (fruit.eatAnim > 0.3) {
             const sparkleColor = fruit.isCandy
-              ? `rgba(248, 113, 113, ${fruit.eatAnim})`
-              : `rgba(255, 220, 50, ${fruit.eatAnim})`
-            for (let i = 0; i < 6; i++) {
-              const angle = (i / 6) * Math.PI * 2
-              const r = (1 - fruit.eatAnim) * 50
+              ? `rgba(248,113,113,${fruit.eatAnim})`
+              : fruit.isShiny
+              ? `rgba(255,215,0,${fruit.eatAnim})`
+              : `rgba(255,220,50,${fruit.eatAnim})`
+            const count = fruit.isShiny ? 10 : 6
+            const radius = (1 - fruit.eatAnim) * (fruit.isShiny ? 70 : 50)
+            for (let i = 0; i < count; i++) {
+              const angle = (i / count) * Math.PI * 2
               ctx.beginPath()
               ctx.arc(
-                fruit.x + Math.cos(angle) * r,
-                fruit.y + Math.sin(angle) * r,
-                4 * fruit.eatAnim, 0, Math.PI * 2
+                fruit.x + Math.cos(angle) * radius,
+                fruit.y + Math.sin(angle) * radius,
+                (fruit.isShiny ? 6 : 4) * fruit.eatAnim, 0, Math.PI * 2
               )
-              ctx.fillStyle = sparkleColor
-              ctx.fill()
+              ctx.fillStyle = sparkleColor; ctx.fill()
             }
           }
         }
@@ -416,16 +368,12 @@ export function EasterFrenzy() {
     rafRef.current = requestAnimationFrame(runLoop)
   }, [spawnFruit])
 
-  // ── Camera + image preload init ────────────────────────────────────────────
+  // ── Camera + image preload ─────────────────────────────────────────────────
   const initCamera = useCallback(async () => {
     setLoadingModel(true)
     try {
-      // AudioContext (requires user gesture — satisfied by this button click)
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new AudioContext()
-    }
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
 
-    // Preload all egg PNGs
       const cache = imgCacheRef.current
       await Promise.all(
         ALL_EGG_SRCS.map(src =>
@@ -448,48 +396,38 @@ export function EasterFrenzy() {
           modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
           delegate: "GPU",
         },
-        runningMode: "VIDEO",
-        numFaces: 1,
+        runningMode: "VIDEO", numFaces: 1,
       })
 
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
       streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-      }
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play() }
 
-      setCameraReady(true)
-      setLoadingModel(false)
+      setCameraReady(true); setLoadingModel(false)
       rafRef.current = requestAnimationFrame(runLoop)
     } catch (e) {
-      console.error(e)
-      setLoadingModel(false)
+      console.error(e); setLoadingModel(false)
     }
   }, [runLoop])
 
-  // ── Stage start ────────────────────────────────────────────────────────────
-  const startStage = useCallback((stageIndex: number) => {
+  // ── Start game ─────────────────────────────────────────────────────────────
+  const startGame = useCallback(() => {
     fruitsRef.current = []
     setScorePopups([])
-    stageFruitsRef.current = 0
+    livesRef.current  = 3
+    scoreRef.current  = 0
+    gameTimeRef.current = 0
     spawnCoolRef.current = 0
-    lastTimeRef.current = 0
-    nextFruitId.current = 0
-    timerRef.current = STAGES[stageIndex].timeLimit
-
-    currentStageRef.current = stageIndex
-    setCurrentStage(stageIndex)
-    setStageFruits(0)
-    setTimeLeft(STAGES[stageIndex].timeLimit)
+    lastTimeRef.current  = 0
+    nextFruitId.current  = 0
+    setLives(3); setScore(0); setGameTime(0)
     setCountdown(3)
     setGameState("countdown")
     gameStateRef.current = "countdown"
 
     let count = 3
     const tick = setInterval(() => {
-      count -= 1
-      setCountdown(count)
+      count -= 1; setCountdown(count)
       if (count <= 0) {
         clearInterval(tick)
         setGameState("playing")
@@ -497,14 +435,6 @@ export function EasterFrenzy() {
       }
     }, 1000)
   }, [])
-
-  const startGame = useCallback(() => {
-    totalScoreRef.current = 0
-    completedStagesRef.current = [false, false, false, false, false]
-    setTotalScore(0)
-    setCompletedStages([false, false, false, false, false])
-    startStage(0)
-  }, [startStage])
 
   const exitToStart = useCallback(() => {
     fruitsRef.current = []
@@ -517,19 +447,15 @@ export function EasterFrenzy() {
     gameStateRef.current = "idle"
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
-    setCameraReady(false)
-    setGameState("idle")
+    setCameraReady(false); setGameState("idle")
   }, [])
 
-  // ── Cleanup ────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       cancelAnimationFrame(rafRef.current)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
   }, [])
-
-  const stage = STAGES[currentStage]
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -538,25 +464,32 @@ export function EasterFrenzy() {
         <video ref={videoRef} className="absolute opacity-0 pointer-events-none" muted playsInline />
         <canvas ref={canvasRef} className="h-full w-full object-contain" />
 
-        {/* ── Crisp HTML HUD ───────────────────────────────────────────────── */}
+        {/* ── Red life-loss flash ──────────────────────────────────────────── */}
+        <AnimatePresence>
+          {lifeFlash && (
+            <motion.div
+              className="absolute inset-0 bg-red-500/40 pointer-events-none z-30"
+              initial={{ opacity: 1 }} animate={{ opacity: 0 }}
+              transition={{ duration: 0.35 }}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* ── HUD ─────────────────────────────────────────────────────────── */}
         {gameState === "playing" && (
-          <div className="absolute top-0 inset-x-0 z-10 flex items-center h-14 px-4 bg-black/50 pointer-events-none"
-               style={{ fontFamily: "var(--font-nunito)" }}>
-            <span className="text-base font-bold" style={{ color: stage.color }}>{stage.name}</span>
-            <div className="flex-1 flex justify-center">
-              <div className="relative w-48 h-5 rounded-full overflow-hidden bg-white/15">
-                <div
-                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-150"
-                  style={{ width: `${Math.min((stageFruits / stage.target) * 100, 100)}%`, background: stage.color }}
-                />
-                <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">
-                  {stageFruits} / {stage.target}
-                </span>
-              </div>
+          <div className="absolute top-0 inset-x-0 z-10 flex items-center h-14 px-4 bg-black/50 pointer-events-none">
+            {/* Lives */}
+            <div className="flex gap-1">
+              {[0, 1, 2].map(i => (
+                <span key={i} className={`text-xl transition-all ${i < lives ? "opacity-100" : "opacity-20 grayscale"}`}>❤️</span>
+              ))}
             </div>
-            <span className={`text-xl font-bold tabular-nums ${timeLeft <= 10 ? "text-red-400" : "text-white"}`}>
-              {timeLeft}s
-            </span>
+            {/* Score */}
+            <div className="flex-1 flex justify-center">
+              <span className="text-2xl font-black text-white tabular-nums">{score}</span>
+            </div>
+            {/* Time */}
+            <span className="text-base font-bold text-white/60 tabular-nums w-16 text-right">{gameTime}s</span>
           </div>
         )}
 
@@ -568,25 +501,25 @@ export function EasterFrenzy() {
               className="absolute inset-0 flex items-center justify-center pointer-events-none z-20"
               initial={{ opacity: 1, y: 0, scale: 0.7 }}
               animate={{ opacity: 0, y: -100, scale: 1.3 }}
-              transition={{ duration: 0.75, ease: "easeOut" }}
+              transition={{ duration: popup.value > 1 ? 0.9 : 0.75, ease: "easeOut" }}
             >
               <span
-                className={`font-black leading-none ${popup.value > 0 ? "text-green-400" : "text-red-400"}`}
+                className={`font-black leading-none ${popup.value > 1 ? "text-yellow-300" : "text-green-400"}`}
                 style={{
-                  fontSize: 96,
+                  fontSize: popup.value > 1 ? 120 : 96,
                   fontFamily: "var(--font-nunito)",
-                  textShadow: popup.value > 0
-                    ? "0 0 32px rgba(74,222,128,0.9)"
-                    : "0 0 32px rgba(248,113,113,0.9)",
+                  textShadow: popup.value > 1
+                    ? "0 0 40px rgba(255,215,0,0.95), 0 0 80px rgba(255,215,0,0.5)"
+                    : "0 0 32px rgba(74,222,128,0.9)",
                 }}
               >
-                {popup.value > 0 ? "+1" : "-1"}
+                +{popup.value}
               </span>
             </motion.div>
           ))}
         </AnimatePresence>
 
-        {/* ── Floating Exit button ─────────────────────────────────────────── */}
+        {/* ── Floating Exit ────────────────────────────────────────────────── */}
         {cameraReady && gameState !== "idle" && (
           <button
             onClick={exitToStart}
@@ -603,19 +536,10 @@ export function EasterFrenzy() {
             <div className="absolute inset-0 bg-gradient-to-br from-pink-950 via-purple-950 to-sky-950" />
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
               {["🥚", "🐣", "🐰", "🌷", "🌸", "🐇", "🦋", "🐥", "🌼", "🪺"].map((emoji, i) => (
-                <div
-                  key={i}
-                  className="absolute text-4xl animate-bounce"
-                  style={{
-                    left: `${(i * 11) % 90}%`,
-                    top: `${(i * 17 + 5) % 75}%`,
-                    animationDelay: `${i * 0.3}s`,
-                    animationDuration: `${2 + (i % 3) * 0.5}s`,
-                    opacity: 0.35,
-                  }}
-                >
-                  {emoji}
-                </div>
+                <div key={i} className="absolute text-4xl animate-bounce" style={{
+                  left: `${(i * 11) % 90}%`, top: `${(i * 17 + 5) % 75}%`,
+                  animationDelay: `${i * 0.3}s`, animationDuration: `${2 + (i % 3) * 0.5}s`, opacity: 0.35,
+                }}>{emoji}</div>
               ))}
             </div>
             <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
@@ -629,8 +553,11 @@ export function EasterFrenzy() {
                   Easter <span className="text-pink-400">Frenzy</span>
                 </h1>
                 <p className="text-white text-lg max-w-sm mx-auto text-center">
-                  Open your mouth to catch falling Easter eggs — but watch out for sneaky fruits!
+                  Catch eggs to score — avoid fruit or lose a life. Survive as long as you can!
                 </p>
+                {highScore > 0 && (
+                  <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>
+                )}
               </div>
               <button
                 onClick={initCamera}
@@ -656,8 +583,11 @@ export function EasterFrenzy() {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/60">
             <div className="text-center">
               <h2 className="text-5xl text-white mb-2" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
-              <p className="text-white text-xl">Catch the eggs — avoid the fruit!</p>
-              <p className="text-white/70 text-lg mt-1">5 stages · Don't let the clock run out</p>
+              <p className="text-white text-xl">Catch eggs — avoid fruit!</p>
+              <p className="text-white/70 text-lg mt-1">3 lives · ✨ Shiny eggs = 10 pts</p>
+              {highScore > 0 && (
+                <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>
+              )}
             </div>
             <button
               onClick={startGame}
@@ -679,13 +609,8 @@ export function EasterFrenzy() {
         {gameState === "countdown" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/60 pointer-events-none">
             <div className="text-center">
-              <p className="text-white text-base font-bold uppercase tracking-widest mb-1">
-                Stage {currentStage + 1} — {stage.name}
-              </p>
-              <p className="text-white/70 text-base">{stage.tagline}</p>
-              <p className="text-white/60 text-sm mt-1">
-                Catch {stage.target} eggs in {stage.timeLimit}s
-              </p>
+              <p className="text-white text-base font-bold uppercase tracking-widest mb-1">Survive!</p>
+              <p className="text-white/60 text-sm mt-1">3 lives · shiny eggs ✨ = 10 pts · speed increases over time</p>
             </div>
             <span
               key={countdown}
@@ -697,113 +622,36 @@ export function EasterFrenzy() {
           </div>
         )}
 
-        {/* ── Stage complete ────────────────────────────────────────────────── */}
-        {gameState === "stage_complete" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/75">
-            <div className="text-6xl animate-bounce">{stage.emoji}</div>
+        {/* ── Game Over ─────────────────────────────────────────────────────── */}
+        {gameState === "gameover" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/85">
+            <div className="text-6xl">💔</div>
             <div className="text-center">
-              <p className="text-pink-400 text-sm font-bold uppercase tracking-widest mb-1">Stage Complete!</p>
-              <h2 className="text-4xl font-bold text-white mb-2">{stage.name}</h2>
-              <p className="text-white text-lg">You caught all {stage.target} eggs!</p>
-            </div>
-            <div className="flex gap-2">
-              {STAGES.map((_, i) => (
-                <div
-                  key={i}
-                  className={`w-3 h-3 rounded-full transition-all ${
-                    completedStages[i] ? "bg-pink-400 scale-110" : "bg-white/20"
-                  }`}
-                />
-              ))}
+              <p className="text-red-400 text-sm font-bold uppercase tracking-widest mb-1">Game Over</p>
+              <p className="text-6xl font-black text-white mb-2 tabular-nums">{score}</p>
+              {score > 0 && score >= highScore ? (
+                <p className="text-yellow-400 text-lg font-bold">🏆 New high score!</p>
+              ) : highScore > 0 ? (
+                <p className="text-white/50 text-base">Best: {highScore}</p>
+              ) : null}
+              <p className="text-white/50 text-sm mt-1">Survived {gameTime}s</p>
             </div>
             <div className="flex gap-3">
               <button
-                onClick={() => startStage(currentStage + 1)}
-                className="flex items-center gap-2 px-8 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-lg transition-colors"
+                onClick={startGame}
+                className="flex items-center gap-2 px-7 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-lg transition-colors"
               >
-                Next Stage
-                <ChevronRight className="w-5 h-5" />
+                <RefreshCw className="w-4 h-4" />
+                Try Again
               </button>
               <button
                 onClick={exitToStart}
                 className="flex items-center gap-2 px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium transition-colors text-base"
               >
                 <LogOut className="w-4 h-4" />
-                Exit
+                Menu
               </button>
             </div>
-          </div>
-        )}
-
-        {/* ── Failed ────────────────────────────────────────────────────────── */}
-        {gameState === "failed" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/80">
-            <div className="text-6xl">😬</div>
-            <div className="text-center">
-              <p className="text-red-400 text-sm font-bold uppercase tracking-widest mb-1">Time's Up!</p>
-              <h2 className="text-4xl font-bold text-white mb-2">{stage.name}</h2>
-              <p className="text-white text-lg">
-                Got {stageFruits} of {stage.target} —{" "}
-                {stage.target - stageFruits === 1
-                  ? "so close!"
-                  : `${stage.target - stageFruits} short`}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {STAGES.map((_, i) => (
-                <div
-                  key={i}
-                  className={`w-3 h-3 rounded-full transition-all ${
-                    completedStages[i]
-                      ? "bg-pink-400"
-                      : i === currentStage
-                      ? "bg-red-400"
-                      : "bg-white/20"
-                  }`}
-                />
-              ))}
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => startStage(currentStage)}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold transition-colors"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Try Again
-              </button>
-              <button
-                onClick={startGame}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold transition-colors text-base"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Restart
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Victory ───────────────────────────────────────────────────────── */}
-        {gameState === "victory" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/80">
-            <div className="text-6xl">🏆🎉🥚</div>
-            <div className="text-center">
-              <p className="text-yellow-400 text-sm font-bold uppercase tracking-widest mb-1">Happy Easter!</p>
-              <h2 className="text-4xl font-bold text-white mb-2">All Stages Complete!</h2>
-              <p className="text-6xl font-bold text-pink-400 mb-1">{totalScore}</p>
-              <p className="text-white text-lg">Total eggs collected</p>
-            </div>
-            <div className="flex gap-2">
-              {STAGES.map((_, i) => (
-                <div key={i} className="w-3 h-3 rounded-full bg-pink-400 scale-110" />
-              ))}
-            </div>
-            <button
-              onClick={startGame}
-              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Play Again
-            </button>
           </div>
         )}
       </div>

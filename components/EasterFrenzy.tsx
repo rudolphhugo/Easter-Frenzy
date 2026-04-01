@@ -107,6 +107,54 @@ interface Fruit {
 
 type GameState = "idle" | "countdown" | "playing" | "stage_complete" | "failed" | "victory"
 
+// ─── Sound effects (Web Audio API synthesis) ─────────────────────────────────
+
+function playChomp(ctx: AudioContext) {
+  const t = ctx.currentTime
+  const bufLen = Math.floor(ctx.sampleRate * 0.07)
+  const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate)
+  const data = buf.getChannelData(0)
+  for (let i = 0; i < bufLen; i++) {
+    data[i] = (Math.random() * 2 - 1) * (1 - i / bufLen)
+  }
+  const noise = ctx.createBufferSource()
+  noise.buffer = buf
+  const filter = ctx.createBiquadFilter()
+  filter.type = "bandpass"
+  filter.frequency.value = 1000
+  filter.Q.value = 1.2
+  const gain = ctx.createGain()
+  gain.gain.setValueAtTime(0.6, t)
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07)
+  noise.connect(filter)
+  filter.connect(gain)
+  gain.connect(ctx.destination)
+  noise.start(t)
+}
+
+function playBlah(ctx: AudioContext) {
+  const t = ctx.currentTime
+  const osc = ctx.createOscillator()
+  osc.type = "sawtooth"
+  osc.frequency.setValueAtTime(230, t)
+  osc.frequency.exponentialRampToValueAtTime(75, t + 0.38)
+  const lfo = ctx.createOscillator()
+  lfo.frequency.value = 9
+  const lfoGain = ctx.createGain()
+  lfoGain.gain.value = 18
+  lfo.connect(lfoGain)
+  lfoGain.connect(osc.frequency)
+  const gain = ctx.createGain()
+  gain.gain.setValueAtTime(0.2, t)
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.42)
+  osc.connect(gain)
+  gain.connect(ctx.destination)
+  lfo.start(t)
+  osc.start(t)
+  lfo.stop(t + 0.42)
+  osc.stop(t + 0.42)
+}
+
 // ─── Mouth helpers ────────────────────────────────────────────────────────────
 
 function getMouthInfo(lms: { x: number; y: number }[], w: number, h: number) {
@@ -128,7 +176,8 @@ export function EasterFrenzy() {
   const streamRef   = useRef<MediaStream | null>(null)
   const detectorRef = useRef<any>(null)
   const rafRef      = useRef<number>(0)
-  const imgCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
+  const imgCacheRef  = useRef<Map<string, HTMLImageElement>>(new Map())
+  const audioCtxRef  = useRef<AudioContext | null>(null)
 
   // Game refs (rAF loop — no stale closures)
   const fruitsRef          = useRef<Fruit[]>([])
@@ -280,6 +329,11 @@ export function EasterFrenzy() {
           if (dist < CATCH_RADIUS && mouthOpen) {
             fruit.eaten = true
             fruit.eatAnim = 1
+            if (audioCtxRef.current) {
+              fruit.isCandy
+                ? playBlah(audioCtxRef.current)
+                : playChomp(audioCtxRef.current)
+            }
             if (fruit.isCandy) {
               stageFruitsRef.current = Math.max(0, stageFruitsRef.current - 1)
               totalScoreRef.current = Math.max(0, totalScoreRef.current - 1)
@@ -366,7 +420,12 @@ export function EasterFrenzy() {
   const initCamera = useCallback(async () => {
     setLoadingModel(true)
     try {
-      // Preload all egg PNGs
+      // AudioContext (requires user gesture — satisfied by this button click)
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContext()
+    }
+
+    // Preload all egg PNGs
       const cache = imgCacheRef.current
       await Promise.all(
         ALL_EGG_SRCS.map(src =>

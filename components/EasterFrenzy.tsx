@@ -560,12 +560,16 @@ export function EasterFrenzy() {
               ))}
             </div>
             <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
-              <div className="text-7xl">🥚🐣🌷</div>
+              <div className="flex items-center gap-3">
+                <img src="/eggs/egg-yellow-0.png" className="w-16 h-16" alt="" />
+                <img src="/eggs/egg-pink-0.png"   className="w-16 h-16" alt="" />
+                <img src="/eggs/egg-blue-0.png"   className="w-16 h-16" alt="" />
+              </div>
               <div className="text-center">
                 <h1 className="text-7xl text-white mb-3 tracking-tight text-center" style={{ fontFamily: "var(--font-erica-one)" }}>
                   Easter <span className="text-pink-400">Frenzy</span>
                 </h1>
-                <p className="text-white text-lg max-w-sm mx-auto text-center">
+                <p className="text-white text-xl max-w-sm mx-auto text-center">
                   Open your mouth to catch falling Easter eggs — but watch out for sneaky fruits!
                 </p>
               </div>
@@ -591,15 +595,19 @@ export function EasterFrenzy() {
         {/* ── Ready ─────────────────────────────────────────────────────────── */}
         {cameraReady && gameState === "idle" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/60">
-            <div className="text-5xl">😮🥚🐣</div>
+            <div className="flex items-center gap-3">
+              <span className="text-5xl">😮</span>
+              <img src="/eggs/egg-yellow-2.png" className="w-14 h-14" alt="" />
+              <img src="/eggs/egg-pink-1.png"   className="w-14 h-14" alt="" />
+            </div>
             <div className="text-center">
               <h2 className="text-5xl text-white mb-2" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
-              <p className="text-white text-lg">Catch the eggs — avoid the fruit!</p>
-              <p className="text-white/70 text-base mt-1">5 stages · Don't let the clock run out</p>
+              <p className="text-white text-xl">Catch the eggs — avoid the fruit!</p>
+              <p className="text-white/70 text-lg mt-1">5 stages · Don't let the clock run out</p>
             </div>
             <button
               onClick={startGame}
-              className="px-8 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-lg transition-colors"
+              className="mt-4 px-8 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-lg transition-colors"
             >
               Play!
             </button>

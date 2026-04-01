@@ -4,6 +4,18 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Camera, RefreshCw, ChevronRight, RotateCcw, LogOut } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 
+// ─── Egg image pools (one per color, 6 variants each) ────────────────────────
+
+const EGG_POOL: Record<string, string[]> = {
+  yellow: Array.from({ length: 6 }, (_, i) => `/eggs/egg-yellow-${i}.png`),
+  pink:   Array.from({ length: 6 }, (_, i) => `/eggs/egg-pink-${i}.png`),
+  green:  Array.from({ length: 6 }, (_, i) => `/eggs/egg-green-${i}.png`),
+  blue:   Array.from({ length: 6 }, (_, i) => `/eggs/egg-blue-${i}.png`),
+  purple: Array.from({ length: 6 }, (_, i) => `/eggs/egg-purple-${i}.png`),
+}
+
+const ALL_EGG_SRCS = Object.values(EGG_POOL).flat()
+
 // ─── Stage Definitions ────────────────────────────────────────────────────────
 
 const STAGES = [
@@ -11,7 +23,7 @@ const STAGES = [
     name: "Egg Hunt Beginners",
     emoji: "🥚",
     tagline: "One egg at a time",
-    fruits: ["🥚"],
+    eggColors: ["yellow"],
     target: 5,
     timeLimit: 30,
     baseSpeed: 1.6,
@@ -22,7 +34,7 @@ const STAGES = [
     name: "Chick Chase",
     emoji: "🐣",
     tagline: "They're hatching fast!",
-    fruits: ["🥚", "🐣"],
+    eggColors: ["yellow", "pink"],
     target: 8,
     timeLimit: 35,
     baseSpeed: 2.1,
@@ -33,7 +45,7 @@ const STAGES = [
     name: "Bunny Scramble",
     emoji: "🐰",
     tagline: "The bunnies are loose",
-    fruits: ["🥚", "🐣", "🐰"],
+    eggColors: ["yellow", "pink", "green"],
     target: 10,
     timeLimit: 35,
     baseSpeed: 2.6,
@@ -44,7 +56,7 @@ const STAGES = [
     name: "Spring Fling",
     emoji: "🌷",
     tagline: "Blooming chaos",
-    fruits: ["🥚", "🐣", "🐇", "🌷", "🌸"],
+    eggColors: ["yellow", "pink", "green", "blue"],
     target: 12,
     timeLimit: 40,
     baseSpeed: 3.2,
@@ -55,7 +67,7 @@ const STAGES = [
     name: "Easter Egg Madness",
     emoji: "🎉",
     tagline: "The ultimate egg frenzy",
-    fruits: ["🥚", "🐣", "🐰", "🐇", "🌷", "🌸", "🦋", "🐥"],
+    eggColors: ["yellow", "pink", "green", "blue", "purple"],
     target: 15,
     timeLimit: 45,
     baseSpeed: 4.0,
@@ -66,10 +78,11 @@ const STAGES = [
 
 // Penalty items: fruits (don't eat these on Easter!)
 const CANDIES = ["🍎", "🍊", "🍋", "🍇", "🍓", "🍌"]
-const CANDY_CHANCE = 0.2         // 20% of spawns are penalty fruits
+const CANDY_CHANCE = 0.2
 const MOUTH_OPEN_RATIO = 0.28
 const CATCH_RADIUS = 52
-const FRUIT_SIZE = 44
+const EGG_SIZE = 64      // PNG eggs rendered at this size
+const EMOJI_SIZE = 48    // penalty emoji font size
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,7 +93,8 @@ interface ScorePopup {
 
 interface Fruit {
   id: number
-  emoji: string
+  imageSrc: string | null  // PNG path for eggs; null for penalty emoji
+  emoji: string            // only used when imageSrc is null
   x: number
   y: number
   speed: number
@@ -114,6 +128,7 @@ export function EasterFrenzy() {
   const streamRef   = useRef<MediaStream | null>(null)
   const detectorRef = useRef<any>(null)
   const rafRef      = useRef<number>(0)
+  const imgCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
 
   // Game refs (rAF loop — no stale closures)
   const fruitsRef          = useRef<Fruit[]>([])
@@ -144,13 +159,25 @@ export function EasterFrenzy() {
     const stage = STAGES[currentStageRef.current]
     const isCandy = Math.random() < CANDY_CHANCE
     const speed = stage.baseSpeed * (0.8 + Math.random() * 0.4)
+    const spawnSize = isCandy ? EMOJI_SIZE : EGG_SIZE
+
+    let imageSrc: string | null = null
+    let emoji = ""
+
+    if (isCandy) {
+      emoji = CANDIES[Math.floor(Math.random() * CANDIES.length)]
+    } else {
+      const colorName = stage.eggColors[Math.floor(Math.random() * stage.eggColors.length)]
+      const pool = EGG_POOL[colorName]
+      imageSrc = pool[Math.floor(Math.random() * pool.length)]
+    }
+
     fruitsRef.current.push({
       id: nextFruitId.current++,
-      emoji: isCandy
-        ? CANDIES[Math.floor(Math.random() * CANDIES.length)]
-        : stage.fruits[Math.floor(Math.random() * stage.fruits.length)],
-      x: FRUIT_SIZE + Math.random() * (canvas.width - FRUIT_SIZE * 2),
-      y: -FRUIT_SIZE,
+      imageSrc,
+      emoji,
+      x: spawnSize + Math.random() * (canvas.width - spawnSize * 2),
+      y: -spawnSize,
       speed,
       wobble: Math.random() * Math.PI * 2,
       wobbleAmp: 20 + Math.random() * 30,
@@ -238,11 +265,9 @@ export function EasterFrenzy() {
 
       fruitsRef.current = fruitsRef.current.filter(f => f.y < H + 80 || f.eatAnim > 0)
 
-      ctx.font = `${FRUIT_SIZE}px serif`
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
-
       for (const fruit of fruitsRef.current) {
+        const size = fruit.imageSrc ? EGG_SIZE : EMOJI_SIZE
+
         if (!fruit.eaten) {
           fruit.y += fruit.speed * dt * 60
           fruit.wobble += dt * 1.2
@@ -279,11 +304,20 @@ export function EasterFrenzy() {
             }
           } else {
             ctx.save()
-            ctx.shadowColor = "rgba(0,0,0,0.5)"
-            ctx.shadowBlur = 8
-            ctx.fillText(fruit.emoji, fx, fruit.y)
+            ctx.shadowColor = "rgba(0,0,0,0.4)"
+            ctx.shadowBlur = 10
+            if (fruit.imageSrc) {
+              const img = imgCacheRef.current.get(fruit.imageSrc)
+              if (img) ctx.drawImage(img, fx - size / 2, fruit.y - size / 2, size, size)
+            } else {
+              ctx.font = `${size}px serif`
+              ctx.textAlign = "center"
+              ctx.textBaseline = "middle"
+              ctx.fillText(fruit.emoji, fx, fruit.y)
+            }
             ctx.restore()
           }
+
         } else if (fruit.eatAnim > 0) {
           fruit.eatAnim -= dt * 3
           const t = 1 - fruit.eatAnim
@@ -292,14 +326,22 @@ export function EasterFrenzy() {
           ctx.globalAlpha = fruit.eatAnim
           ctx.translate(fruit.x + Math.sin(fruit.wobble) * fruit.wobbleAmp, fruit.y)
           ctx.scale(scale, scale)
-          ctx.fillText(fruit.emoji, 0, 0)
+          if (fruit.imageSrc) {
+            const img = imgCacheRef.current.get(fruit.imageSrc)
+            if (img) ctx.drawImage(img, -size / 2, -size / 2, size, size)
+          } else {
+            ctx.font = `${size}px serif`
+            ctx.textAlign = "center"
+            ctx.textBaseline = "middle"
+            ctx.fillText(fruit.emoji, 0, 0)
+          }
           ctx.globalAlpha = 1
           ctx.restore()
 
           if (fruit.eatAnim > 0.3) {
             const sparkleColor = fruit.isCandy
-              ? `rgba(248, 113, 113, ${fruit.eatAnim})`   // red for candy
-              : `rgba(255, 220, 50, ${fruit.eatAnim})`    // gold for fruit
+              ? `rgba(248, 113, 113, ${fruit.eatAnim})`
+              : `rgba(255, 220, 50, ${fruit.eatAnim})`
             for (let i = 0; i < 6; i++) {
               const angle = (i / 6) * Math.PI * 2
               const r = (1 - fruit.eatAnim) * 50
@@ -315,16 +357,29 @@ export function EasterFrenzy() {
           }
         }
       }
-
     }
 
     rafRef.current = requestAnimationFrame(runLoop)
   }, [spawnFruit])
 
-  // ── Camera init ────────────────────────────────────────────────────────────
+  // ── Camera + image preload init ────────────────────────────────────────────
   const initCamera = useCallback(async () => {
     setLoadingModel(true)
     try {
+      // Preload all egg PNGs
+      const cache = imgCacheRef.current
+      await Promise.all(
+        ALL_EGG_SRCS.map(src =>
+          new Promise<void>(resolve => {
+            if (cache.has(src)) { resolve(); return }
+            const img = new Image()
+            img.onload = () => { cache.set(src, img); resolve() }
+            img.onerror = () => resolve()
+            img.src = src
+          })
+        )
+      )
+
       const { FaceLandmarker, FilesetResolver } = await import("@mediapipe/tasks-vision")
       const vision = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
@@ -392,14 +447,12 @@ export function EasterFrenzy() {
     startStage(0)
   }, [startStage])
 
-  // Return to ready screen (camera stays on)
   const exitToStart = useCallback(() => {
     fruitsRef.current = []
     gameStateRef.current = "idle"
     setGameState("idle")
   }, [])
 
-  // Stop camera and return to pre-camera start screen
   const exitGame = useCallback(() => {
     fruitsRef.current = []
     gameStateRef.current = "idle"
@@ -426,7 +479,7 @@ export function EasterFrenzy() {
         <video ref={videoRef} className="absolute opacity-0 pointer-events-none" muted playsInline />
         <canvas ref={canvasRef} className="h-full w-full object-contain" />
 
-        {/* ── Crisp HTML HUD (replaces canvas-drawn HUD) ───────────────────── */}
+        {/* ── Crisp HTML HUD ───────────────────────────────────────────────── */}
         {gameState === "playing" && (
           <div className="absolute top-0 inset-x-0 z-10 flex items-center h-14 px-4 bg-black/50 pointer-events-none"
                style={{ fontFamily: "var(--font-nunito)" }}>
@@ -448,7 +501,7 @@ export function EasterFrenzy() {
           </div>
         )}
 
-        {/* ── Crisp score popups ────────────────────────────────────────────── */}
+        {/* ── Score popups ─────────────────────────────────────────────────── */}
         <AnimatePresence>
           {scorePopups.map(popup => (
             <motion.div
@@ -474,11 +527,11 @@ export function EasterFrenzy() {
           ))}
         </AnimatePresence>
 
-        {/* ── Floating Exit button (shown during any active game state) ─────── */}
+        {/* ── Floating Exit button ─────────────────────────────────────────── */}
         {cameraReady && gameState !== "idle" && (
           <button
             onClick={exitToStart}
-            className="absolute top-4 right-4 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/40 hover:bg-black/70 text-white hover:text-white text-sm font-medium transition-all backdrop-blur-sm border border-white/20"
+            className="absolute top-4 right-4 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/40 hover:bg-black/70 text-white text-sm font-medium transition-all backdrop-blur-sm border border-white/20"
           >
             <LogOut className="w-3.5 h-3.5" />
             Exit
@@ -489,8 +542,6 @@ export function EasterFrenzy() {
         {!cameraReady && !loadingModel && (
           <div className="absolute inset-0 flex flex-col items-center justify-center overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-pink-950 via-purple-950 to-sky-950" />
-
-            {/* Floating Easter bg */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
               {["🥚", "🐣", "🐰", "🌷", "🌸", "🐇", "🦋", "🐥", "🌼", "🪺"].map((emoji, i) => (
                 <div
@@ -508,7 +559,6 @@ export function EasterFrenzy() {
                 </div>
               ))}
             </div>
-
             <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
               <div className="text-7xl">🥚🐣🌷</div>
               <div className="text-center">
@@ -519,7 +569,6 @@ export function EasterFrenzy() {
                   Open your mouth to catch falling Easter eggs — but watch out for sneaky fruits!
                 </p>
               </div>
-
               <button
                 onClick={initCamera}
                 className="flex items-center gap-2 px-8 py-4 rounded-2xl bg-pink-500 hover:bg-pink-400 active:scale-95 text-white font-bold text-lg transition-all shadow-lg shadow-pink-900/50 hover:scale-105"
@@ -535,7 +584,7 @@ export function EasterFrenzy() {
         {loadingModel && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-slate-950">
             <div className="w-12 h-12 rounded-full border-2 border-pink-500 border-t-transparent animate-spin" />
-            <p className="text-white text-base">Loading face model…</p>
+            <p className="text-white text-base">Loading…</p>
           </div>
         )}
 
@@ -586,7 +635,7 @@ export function EasterFrenzy() {
           </div>
         )}
 
-        {/* ── Stage complete ─────────────────────────────────────────────────── */}
+        {/* ── Stage complete ────────────────────────────────────────────────── */}
         {gameState === "stage_complete" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/75">
             <div className="text-6xl animate-bounce">{stage.emoji}</div>

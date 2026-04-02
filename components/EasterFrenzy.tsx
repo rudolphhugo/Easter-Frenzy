@@ -3,15 +3,16 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Camera, RefreshCw, LogOut } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
+import { submitScore, fetchLeaderboard, type LeaderboardEntry } from "@/lib/supabase"
 
 // ─── Egg image pools ──────────────────────────────────────────────────────────
 
 const EGG_POOL: Record<string, string[]> = {
-  yellow: Array.from({ length: 6 }, (_, i) => `/eggs/egg-yellow-${i}.png`),
-  pink:   Array.from({ length: 6 }, (_, i) => `/eggs/egg-pink-${i}.png`),
-  green:  Array.from({ length: 6 }, (_, i) => `/eggs/egg-green-${i}.png`),
-  blue:   Array.from({ length: 6 }, (_, i) => `/eggs/egg-blue-${i}.png`),
-  purple: Array.from({ length: 6 }, (_, i) => `/eggs/egg-purple-${i}.png`),
+  yellow: Array.from({ length: 6 }, (_, i) => `/eggs/egg-yellow-${i}.svg`),
+  pink:   Array.from({ length: 6 }, (_, i) => `/eggs/egg-pink-${i}.svg`),
+  green:  Array.from({ length: 6 }, (_, i) => `/eggs/egg-green-${i}.svg`),
+  blue:   Array.from({ length: 6 }, (_, i) => `/eggs/egg-blue-${i}.svg`),
+  purple: Array.from({ length: 6 }, (_, i) => `/eggs/egg-purple-${i}.svg`),
 }
 const ALL_EGG_COLORS = Object.keys(EGG_POOL)
 const ALL_EGG_SRCS   = Object.values(EGG_POOL).flat()
@@ -22,9 +23,9 @@ function getDifficulty(elapsed: number) {
   const t = Math.min(elapsed / 120, 1)
   return {
     speed:       1.5 + t * 3.5,
-    maxFruits:   Math.round(1 + t * 6),
+    maxFruits:   Math.round(5 + t * 3),
     candyChance: 0.15 + t * 0.20,
-    spawnCool:   0.9 - t * 0.5,
+    spawnCool:   0.45 - t * 0.15,
   }
 }
 
@@ -182,10 +183,17 @@ export function EasterFrenzy() {
   const [callout, setCallout]         = useState<Callout | null>(null)
   const [frenzyActive, setFrenzyActive] = useState(false)
   const [slowActive, setSlowActive]   = useState(false)
+  const [leaderboard, setLeaderboard]   = useState<LeaderboardEntry[]>([])
+  const [playerName, setPlayerName]     = useState("")
+  const [submitted, setSubmitted]       = useState(false)
+  const [submitting, setSubmitting]     = useState(false)
+  const [submitError, setSubmitError]   = useState("")
+  const [toast, setToast]               = useState(false)
 
   useEffect(() => {
     const saved = parseInt(localStorage.getItem(HS_KEY) || "0")
     if (saved > 0) setHighScore(saved)
+    fetchLeaderboard().then(setLeaderboard).catch(() => {})
   }, [])
 
   // Stable callout trigger (setCallout is stable, calloutTimerRef is a ref)
@@ -194,6 +202,24 @@ export function EasterFrenzy() {
     setCallout({ id: Date.now(), text, type })
     calloutTimerRef.current = setTimeout(() => setCallout(null), 1800)
   }, [])
+
+  const handleSubmitScore = useCallback(async () => {
+    if (!playerName.trim() || submitting) return
+    setSubmitting(true)
+    setSubmitError("")
+    try {
+      await submitScore(playerName, score, gameTime)
+      setSubmitted(true)
+      setToast(true)
+      setTimeout(() => setToast(false), 2500)
+      const updated = await fetchLeaderboard()
+      setLeaderboard(updated)
+    } catch (e: any) {
+      setSubmitError(e?.message ?? "Failed to submit")
+      console.error("Leaderboard submit error:", e)
+    }
+    finally { setSubmitting(false) }
+  }, [playerName, score, gameTime, submitting])
 
   // ── Spawn ──────────────────────────────────────────────────────────────────
   const spawnFruit = useCallback((canvas: HTMLCanvasElement) => {
@@ -242,9 +268,12 @@ export function EasterFrenzy() {
 
     const dt = lastTimeRef.current ? Math.min((ts - lastTimeRef.current) / 1000, 0.05) : 0.016
     lastTimeRef.current = ts
-    canvas.width  = video.videoWidth  || 640
-    canvas.height = video.videoHeight || 480
-    const W = canvas.width, H = canvas.height
+    const dpr = window.devicePixelRatio || 1
+    const W = video.videoWidth  || 640
+    const H = video.videoHeight || 480
+    canvas.width  = W * dpr
+    canvas.height = H * dpr
+    ctx.scale(dpr, dpr)
 
     ctx.save(); ctx.scale(-1, 1); ctx.drawImage(video, -W, 0, W, H); ctx.restore()
 
@@ -506,6 +535,7 @@ export function EasterFrenzy() {
     if (calloutTimerRef.current) clearTimeout(calloutTimerRef.current)
     setLives(3); setScore(0); setGameTime(0); setTimeLeft(START_TIME)
     setCallout(null); setFrenzyActive(false); setSlowActive(false)
+    setSubmitted(false); setPlayerName(""); setSubmitError(""); setToast(false)
     setCountdown(3); setGameState("countdown"); gameStateRef.current = "countdown"
     let count = 3
     const tick = setInterval(() => {
@@ -550,13 +580,6 @@ export function EasterFrenzy() {
           )}
         </AnimatePresence>
 
-        {/* ── Red life-loss flash ──────────────────────────────────────────── */}
-        <AnimatePresence>
-          {lifeFlash && (
-            <motion.div className="absolute inset-0 bg-red-500/40 pointer-events-none z-30"
-              initial={{ opacity: 1 }} animate={{ opacity: 0 }} transition={{ duration: 0.35 }} />
-          )}
-        </AnimatePresence>
 
         {/* ── Milestone / Frenzy callout ───────────────────────────────────── */}
         <AnimatePresence>
@@ -606,7 +629,13 @@ export function EasterFrenzy() {
               {frenzyActive && <span className="text-xs font-bold text-pink-300 uppercase tracking-widest">2× frenzy</span>}
               {slowActive && !frenzyActive && <span className="text-xs font-bold text-cyan-300 uppercase tracking-widest">🐢 slow</span>}
             </div>
-            <span className="text-base font-black text-white tabular-nums w-16 text-right">{score}</span>
+          </div>
+        )}
+
+        {/* ── Bottom score ─────────────────────────────────────────────────── */}
+        {gameState === "playing" && (
+          <div className="absolute bottom-4 inset-x-0 z-10 flex justify-center pointer-events-none">
+            <span className="text-5xl font-black text-white tabular-nums drop-shadow-lg" style={{ textShadow: "0 2px 12px rgba(0,0,0,0.7)" }}>{score}</span>
           </div>
         )}
 
@@ -637,6 +666,20 @@ export function EasterFrenzy() {
           ))}
         </AnimatePresence>
 
+        {/* ── Toast ───────────────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              initial={{ opacity: 0, y: -16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="absolute top-5 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-full bg-green-500 text-white text-sm font-bold shadow-lg pointer-events-none"
+            >
+              ✓ Score submitted!
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* ── Floating Exit ────────────────────────────────────────────────── */}
         {cameraReady && gameState !== "idle" && (
           <button onClick={exitToStart}
@@ -649,26 +692,18 @@ export function EasterFrenzy() {
         {!cameraReady && !loadingModel && (
           <div className="absolute inset-0 flex flex-col items-center justify-center overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-pink-950 via-purple-950 to-sky-950" />
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              {["🥚","🐣","🐰","🌷","🌸","🐇","🦋","🐥","🌼","🪺"].map((e, i) => (
-                <div key={i} className="absolute text-4xl animate-bounce" style={{
-                  left: `${(i*11)%90}%`, top: `${(i*17+5)%75}%`,
-                  animationDelay: `${i*0.3}s`, animationDuration: `${2+(i%3)*0.5}s`, opacity: 0.35,
-                }}>{e}</div>
-              ))}
-            </div>
             <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
               <div className="flex items-center gap-3">
-                <img src="/eggs/egg-yellow-0.png" className="w-16 h-16" alt="" />
-                <img src="/eggs/egg-pink-0.png"   className="w-16 h-16" alt="" />
-                <img src="/eggs/egg-blue-0.png"   className="w-16 h-16" alt="" />
+                <img src="/eggs/egg-yellow-0.svg" className="w-16 h-16" alt="" />
+                <img src="/eggs/egg-pink-0.svg"   className="w-16 h-16" alt="" />
+                <img src="/eggs/egg-blue-0.svg"   className="w-16 h-16" alt="" />
               </div>
               <div className="text-center">
                 <h1 className="text-7xl text-white mb-3 tracking-tight text-center" style={{ fontFamily: "var(--font-erica-one)" }}>
                   Easter <span className="text-pink-400">Frenzy</span>
                 </h1>
                 <p className="text-white text-lg max-w-sm mx-auto text-center">
-                  Catch eggs to score — avoid fruit or lose a life.
+                  Eat the eggs - avoid the fruit!
                 </p>
                 {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>}
               </div>
@@ -676,6 +711,18 @@ export function EasterFrenzy() {
                 className="mt-4 flex items-center gap-2 px-8 py-4 rounded-2xl bg-pink-500 hover:bg-pink-400 active:scale-95 text-white font-bold text-lg transition-all shadow-lg shadow-pink-900/50 hover:scale-105">
                 <Camera className="w-5 h-5" />Start Camera
               </button>
+              {leaderboard.length > 0 && (
+                <div className="w-64 rounded-xl overflow-hidden" style={{ background: "linear-gradient(135deg, #4a0e2b 0%, #2d0a47 50%, #0a2540 100%)" }}>
+                  <p className="text-pink-300/70 text-xs font-bold uppercase tracking-widest text-center py-2 border-b border-white/10">Top Scores</p>
+                  {leaderboard.map((entry, i) => (
+                    <div key={entry.id} className={`flex items-center justify-between px-4 py-1.5 text-sm ${i === 0 ? "bg-yellow-400/10" : ""}`}>
+                      <span className={`w-5 font-bold ${i === 0 ? "text-yellow-400" : "text-pink-300/40"}`}>{i + 1}</span>
+                      <span className="text-white flex-1 truncate mx-2">{entry.name}</span>
+                      <span className="text-pink-200 font-bold tabular-nums">{entry.score}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -693,9 +740,8 @@ export function EasterFrenzy() {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/60">
             <div className="text-center">
               <h2 className="text-5xl text-white mb-2" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
-              <p className="text-white text-xl">Catch eggs — avoid fruit!</p>
-              <p className="text-white/70 text-lg mt-1">90s · 3 lives</p>
-              {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>}
+              <p className="text-white/70 text-lg mt-1">90 seconds / 3 lives</p>
+              {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-6">🏆 Best: {highScore}</p>}
             </div>
             <button onClick={startGame}
               className="mt-4 px-8 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-lg transition-colors">
@@ -711,10 +757,7 @@ export function EasterFrenzy() {
         {/* ── Countdown ─────────────────────────────────────────────────────── */}
         {gameState === "countdown" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/60 pointer-events-none">
-            <div className="text-center">
-              <p className="text-white text-base font-bold uppercase tracking-widest mb-1">Survive!</p>
-              <p className="text-white/60 text-sm">90s · 3 lives · ✨ golden = +5s · 50pts = +10s · FRENZY every 40s</p>
-            </div>
+            <p className="text-white text-2xl font-black uppercase tracking-widest">Get ready to chomp in...</p>
             <span key={countdown} className="text-[120px] font-black text-white drop-shadow-lg animate-ping"
               style={{ animationDuration: "0.9s", animationIterationCount: 1 }}>
               {countdown === 0 ? "GO!" : countdown}
@@ -724,27 +767,68 @@ export function EasterFrenzy() {
 
         {/* ── Game Over ─────────────────────────────────────────────────────── */}
         {gameState === "gameover" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/85">
-            <div className="text-6xl">💔</div>
-            <div className="text-center">
-              <p className="text-red-400 text-sm font-bold uppercase tracking-widest mb-1">Game Over</p>
-              <p className="text-6xl font-black text-white mb-2 tabular-nums">{score}</p>
-              {score > 0 && score >= highScore
-                ? <p className="text-yellow-400 text-lg font-bold">🏆 New high score!</p>
-                : highScore > 0
-                ? <p className="text-white/50 text-base">Best: {highScore}</p>
-                : null}
-              <p className="text-white/50 text-sm mt-1">Survived {gameTime}s</p>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={startGame}
-                className="flex items-center gap-2 px-7 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-lg transition-colors">
-                <RefreshCw className="w-4 h-4" />Try Again
-              </button>
-              <button onClick={exitToStart}
-                className="flex items-center gap-2 px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium transition-colors text-base">
-                <LogOut className="w-4 h-4" />Menu
-              </button>
+          <div className="absolute inset-0 flex flex-col items-center justify-center overflow-y-auto" style={{ background: "linear-gradient(135deg, rgba(131,24,67,0.92) 0%, rgba(88,28,135,0.92) 50%, rgba(12,74,110,0.92) 100%)" }}>
+            <div className="flex flex-col items-center gap-6 px-6 py-8 w-full max-w-sm">
+
+              {/* Score block */}
+              <div className="text-center">
+                <p className="text-4xl mb-1">💔</p>
+                <p className="text-white text-2xl font-black uppercase tracking-widest mb-3">Game Over</p>
+                <p className="text-8xl font-black text-white tabular-nums leading-none">{score}</p>
+                {score > 0 && score >= highScore && (
+                  <p className="text-yellow-400 text-sm font-bold mt-2">🏆 New high score!</p>
+                )}
+                <p className="text-white text-sm mt-2">
+                  Survived {gameTime} Seconds{highScore > 0 ? ` / Best score: ${highScore}` : ""}
+                </p>
+              </div>
+
+              {/* Submit + leaderboard block */}
+              <div className="w-full flex flex-col items-center gap-3">
+                {!submitted ? (
+                  <div className="flex gap-2 w-full">
+                    <input
+                      value={playerName}
+                      onChange={e => setPlayerName(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && handleSubmitScore()}
+                      placeholder="Your name"
+                      maxLength={20}
+                      className="flex-1 px-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 text-sm outline-none focus:border-pink-400"
+                    />
+                    <button onClick={handleSubmitScore} disabled={!playerName.trim() || submitting}
+                      className="px-5 py-2.5 rounded-xl bg-pink-500 hover:bg-pink-400 disabled:opacity-40 text-white font-bold text-sm transition-colors whitespace-nowrap">
+                      {submitting ? "…" : "Submit"}
+                    </button>
+                  </div>
+                ) : null}
+                {submitError && <p className="text-red-400 text-xs text-center">{submitError}</p>}
+
+                {leaderboard.length > 0 && (
+                  <div className="w-full rounded-xl overflow-hidden" style={{ background: "linear-gradient(135deg, #4a0e2b 0%, #2d0a47 50%, #0a2540 100%)" }}>
+                    <p className="text-pink-300/70 text-xs font-bold uppercase tracking-widest text-center py-2 border-b border-white/10">Top Scores</p>
+                    {leaderboard.map((entry, i) => (
+                      <div key={entry.id} className={`flex items-center justify-between px-4 py-2 text-sm ${i === 0 ? "bg-yellow-400/10" : ""}`}>
+                        <span className={`w-5 font-bold ${i === 0 ? "text-yellow-400" : "text-pink-300/40"}`}>{i + 1}</span>
+                        <span className="text-white flex-1 truncate mx-3">{entry.name}</span>
+                        <span className="text-pink-200 font-bold tabular-nums">{entry.score}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 w-full mt-4">
+                <button onClick={startGame}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-base transition-colors">
+                  <RefreshCw className="w-4 h-4" />Try Again
+                </button>
+                <button onClick={exitToStart}
+                  className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium transition-colors text-base">
+                  <LogOut className="w-4 h-4" />Menu
+                </button>
+              </div>
+
             </div>
           </div>
         )}

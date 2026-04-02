@@ -51,6 +51,21 @@ const HS_KEY                = "easter-frenzy-highscore"
 
 // ─── Sound effects ────────────────────────────────────────────────────────────
 
+function playSqueak(ctx: AudioContext) {
+  const t = ctx.currentTime
+  const freqs = [520, 720]
+  freqs.forEach((f, i) => {
+    const osc = ctx.createOscillator(); osc.type = "sine"
+    osc.frequency.setValueAtTime(f, t + i * 0.04)
+    osc.frequency.exponentialRampToValueAtTime(f * 1.3, t + i * 0.04 + 0.04)
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.18, t + i * 0.04)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.04 + 0.07)
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.start(t + i * 0.04); osc.stop(t + i * 0.04 + 0.08)
+  })
+}
+
 function playChomp(ctx: AudioContext) {
   const t = ctx.currentTime
   const bufLen = Math.floor(ctx.sampleRate * 0.07)
@@ -189,6 +204,7 @@ export function EasterFrenzy() {
   const [submitting, setSubmitting]     = useState(false)
   const [submitError, setSubmitError]   = useState("")
   const [toast, setToast]               = useState(false)
+  const [jigglingEgg, setJigglingEgg]   = useState<number | null>(null)
 
   useEffect(() => {
     const saved = parseInt(localStorage.getItem(HS_KEY) || "0")
@@ -694,11 +710,20 @@ export function EasterFrenzy() {
         {!cameraReady && !loadingModel && (
           <div className="absolute inset-0 flex flex-col items-center justify-center overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-pink-950 via-purple-950 to-sky-950" />
+            <div className="absolute inset-0 opacity-[0.15]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`, backgroundRepeat: "repeat", backgroundSize: "128px 128px" }} />
             <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
               <div className="flex items-center gap-3">
-                <img src="/eggs/egg-yellow-0.svg" className="w-16 h-16" alt="" />
-                <img src="/eggs/egg-pink-0.svg"   className="w-16 h-16" alt="" />
-                <img src="/eggs/egg-blue-0.svg"   className="w-16 h-16" alt="" />
+                {["/eggs/egg-yellow-0.svg", "/eggs/egg-pink-0.svg", "/eggs/egg-blue-0.svg"].map((src, i) => (
+                  <img key={i} src={src} alt="" style={{ cursor: "pointer" }}
+                    className={`w-16 h-16 ${jigglingEgg === i ? "egg-jiggle" : ""}`}
+                    onMouseEnter={() => {
+                      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
+                      playSqueak(audioCtxRef.current)
+                      setJigglingEgg(i)
+                      setTimeout(() => setJigglingEgg(null), 450)
+                    }}
+                  />
+                ))}
               </div>
               <div className="text-center">
                 <h1 className="text-7xl text-white mb-3 tracking-tight text-center" style={{ fontFamily: "var(--font-erica-one)" }}>
@@ -707,7 +732,7 @@ export function EasterFrenzy() {
                 <p className="text-white text-lg max-w-sm mx-auto text-center">
                   Eat the eggs - avoid the fruit!
                 </p>
-                {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Best: {highScore}</p>}
+                {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-2">🏆 Your best: {highScore}</p>}
               </div>
               <button onClick={initCamera}
                 className="mt-4 flex items-center gap-2 px-8 py-4 rounded-2xl bg-pink-500 hover:bg-pink-400 active:scale-95 text-white font-bold text-lg transition-all shadow-lg shadow-pink-900/50 hover:scale-105">
@@ -718,8 +743,8 @@ export function EasterFrenzy() {
               </p>
               {leaderboard.length > 0 && (
                 <>
-                  <div className="w-64 border-t border-white/15 pt-1" />
-                  <div className="w-64 rounded-xl overflow-hidden" style={{ background: "rgba(60,0,100,0.75)", backdropFilter: "blur(8px)", border: "1px solid rgba(168,85,247,0.3)" }}>
+                  <div className="w-80 border-t border-white/15 pt-1" />
+                  <div className="w-80 rounded-xl overflow-hidden" style={{ background: "rgba(60,0,100,0.75)", backdropFilter: "blur(8px)", border: "1px solid rgba(168,85,247,0.3)" }}>
                     <p className="text-purple-300/80 text-sm font-bold uppercase tracking-widest text-center py-3 border-b border-purple-500/20">Top Scores</p>
                     <div className="relative">
                       <div className="max-h-48 overflow-y-auto">
@@ -754,7 +779,7 @@ export function EasterFrenzy() {
             <div className="text-center flex flex-col gap-2">
               <h2 className="text-5xl text-white" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
               <p className="text-white/70 text-lg">90 seconds / 3 lives</p>
-              {highScore > 0 && <p className="text-yellow-400 text-base font-bold">🏆 Best: {highScore}</p>}
+              {highScore > 0 && <p className="text-yellow-400 text-base font-bold">🏆 Your best: {highScore}</p>}
             </div>
             <div className="flex flex-col items-center gap-4">
               <button onClick={startGame}

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Camera, RefreshCw, LogOut } from "lucide-react"
+import { Camera, RefreshCw, LogOut, Timer } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 import { submitScore, fetchLeaderboard, type LeaderboardEntry } from "@/lib/supabase"
 
@@ -308,7 +308,7 @@ export function EasterFrenzy() {
 
       // ── Time up ──────────────────────────────────────────────────────────
       if (timeLeftRef.current <= 0) {
-        gameStateRef.current = "gameover"; setGameState("gameover")
+        gameStateRef.current = "gameover"; setGameState("gameover"); setFrenzyActive(false); setSlowActive(false)
         const final = scoreRef.current
         const prev  = parseInt(localStorage.getItem(HS_KEY) || "0")
         if (final > prev) { localStorage.setItem(HS_KEY, String(final)); setHighScore(final) }
@@ -385,7 +385,7 @@ export function EasterFrenzy() {
               setLifeFlash(true)
               setTimeout(() => setLifeFlash(false), 350)
               if (livesRef.current <= 0) {
-                gameStateRef.current = "gameover"; setGameState("gameover")
+                gameStateRef.current = "gameover"; setGameState("gameover"); setFrenzyActive(false); setSlowActive(false)
                 const final = scoreRef.current
                 const prev  = parseInt(localStorage.getItem(HS_KEY) || "0")
                 if (final > prev) { localStorage.setItem(HS_KEY, String(final)); setHighScore(final) }
@@ -610,33 +610,35 @@ export function EasterFrenzy() {
 
         {/* ── HUD ─────────────────────────────────────────────────────────── */}
         {gameState === "playing" && (
-          <div
-            className="absolute top-0 inset-x-0 z-10 flex items-center h-14 px-4 pointer-events-none transition-colors duration-300"
-            style={{ background: frenzyActive ? "rgba(157,23,77,0.65)" : "rgba(0,0,0,0.5)" }}
-          >
-            <div className="flex gap-1">
-              {[0, 1, 2].map(i => (
-                <span key={i} className={`text-xl transition-all ${i < lives ? "opacity-100" : "opacity-20 grayscale"}`}>❤️</span>
-              ))}
+          <>
+            {/* Timer — top center */}
+            <div className="absolute top-0 inset-x-0 z-10 flex flex-col items-center pt-3 pointer-events-none transition-colors duration-300">
+              <div className="flex items-center gap-1.5">
+                <Timer className="w-5 h-5" style={{ color: timeLeft <= 10 ? "#f87171" : timeLeft <= 20 ? "#fb923c" : "white" }} />
+                <span
+                  className="text-2xl font-black tabular-nums leading-none transition-colors duration-300"
+                  style={{ color: timeLeft <= 10 ? "#f87171" : timeLeft <= 20 ? "#fb923c" : "white" }}
+                >
+                  {timeLeft}s
+                </span>
+              </div>
+              {frenzyActive && <span className="text-xs font-bold text-pink-300 uppercase tracking-widest mt-0.5">2× frenzy</span>}
+              {slowActive && !frenzyActive && <span className="text-xs font-bold text-cyan-300 uppercase tracking-widest mt-0.5">🐢 slow</span>}
             </div>
-            <div className="flex-1 flex flex-col items-center gap-0.5">
-              <span
-                className="text-2xl font-black tabular-nums leading-none transition-colors duration-300"
-                style={{ color: timeLeft <= 10 ? "#f87171" : timeLeft <= 20 ? "#fb923c" : "white" }}
-              >
-                {timeLeft}s
-              </span>
-              {frenzyActive && <span className="text-xs font-bold text-pink-300 uppercase tracking-widest">2× frenzy</span>}
-              {slowActive && !frenzyActive && <span className="text-xs font-bold text-cyan-300 uppercase tracking-widest">🐢 slow</span>}
-            </div>
-          </div>
-        )}
 
-        {/* ── Bottom score ─────────────────────────────────────────────────── */}
-        {gameState === "playing" && (
-          <div className="absolute bottom-4 inset-x-0 z-10 flex justify-center pointer-events-none">
-            <span className="text-5xl font-black text-white tabular-nums drop-shadow-lg" style={{ textShadow: "0 2px 12px rgba(0,0,0,0.7)" }}>{score}</span>
-          </div>
+            {/* Score + hearts — bottom */}
+            <div className="absolute bottom-5 inset-x-0 z-10 flex justify-center pointer-events-none">
+              <div className="flex items-center gap-0 rounded-2xl overflow-hidden" style={{ background: "rgba(60,0,100,0.75)", backdropFilter: "blur(8px)", border: "1px solid rgba(168,85,247,0.3)" }}>
+                <div className="flex gap-1 px-5 py-3">
+                  {[0, 1, 2].map(i => (
+                    <span key={i} className={`text-2xl transition-all ${i < lives ? "opacity-100" : "opacity-20 grayscale"}`}>❤️</span>
+                  ))}
+                </div>
+                <div className="w-px self-stretch bg-white/20" />
+                <span className="text-4xl font-black text-white tabular-nums px-5 py-3">{score}</span>
+              </div>
+            </div>
+          </>
         )}
 
         {/* ── Score popups ─────────────────────────────────────────────────── */}
@@ -711,17 +713,28 @@ export function EasterFrenzy() {
                 className="mt-4 flex items-center gap-2 px-8 py-4 rounded-2xl bg-pink-500 hover:bg-pink-400 active:scale-95 text-white font-bold text-lg transition-all shadow-lg shadow-pink-900/50 hover:scale-105">
                 <Camera className="w-5 h-5" />Start Camera
               </button>
+              <p className="text-white/40 text-xs max-w-xs text-center leading-relaxed">
+                All processing happens locally in your browser. No video is stored or sent anywhere.
+              </p>
               {leaderboard.length > 0 && (
-                <div className="w-64 rounded-xl overflow-hidden" style={{ background: "linear-gradient(135deg, #4a0e2b 0%, #2d0a47 50%, #0a2540 100%)" }}>
-                  <p className="text-pink-300/70 text-xs font-bold uppercase tracking-widest text-center py-2 border-b border-white/10">Top Scores</p>
-                  {leaderboard.map((entry, i) => (
-                    <div key={entry.id} className={`flex items-center justify-between px-4 py-1.5 text-sm ${i === 0 ? "bg-yellow-400/10" : ""}`}>
-                      <span className={`w-5 font-bold ${i === 0 ? "text-yellow-400" : "text-pink-300/40"}`}>{i + 1}</span>
-                      <span className="text-white flex-1 truncate mx-2">{entry.name}</span>
-                      <span className="text-pink-200 font-bold tabular-nums">{entry.score}</span>
+                <>
+                  <div className="w-64 border-t border-white/15 pt-1" />
+                  <div className="w-64 rounded-xl overflow-hidden" style={{ background: "rgba(60,0,100,0.75)", backdropFilter: "blur(8px)", border: "1px solid rgba(168,85,247,0.3)" }}>
+                    <p className="text-purple-300/80 text-sm font-bold uppercase tracking-widest text-center py-3 border-b border-purple-500/20">Top Scores</p>
+                    <div className="relative">
+                      <div className="max-h-48 overflow-y-auto">
+                        {leaderboard.map((entry, i) => (
+                          <div key={entry.id} className={`flex items-center justify-between px-4 py-2.5 text-base ${i === 0 ? "bg-yellow-400/10" : ""}`}>
+                            <span className={`w-6 font-bold ${i === 0 ? "text-yellow-400" : "text-purple-300/50"}`}>{i + 1}</span>
+                            <span className="text-white flex-1 truncate mx-3">{entry.name}</span>
+                            <span className="text-purple-200 font-bold tabular-nums">{entry.score}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="absolute bottom-0 inset-x-0 h-8 pointer-events-none" style={{ background: "linear-gradient(to bottom, transparent, rgba(60,0,100,0.9))" }} />
                     </div>
-                  ))}
-                </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -737,20 +750,22 @@ export function EasterFrenzy() {
 
         {/* ── Ready ─────────────────────────────────────────────────────────── */}
         {cameraReady && gameState === "idle" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/60">
-            <div className="text-center">
-              <h2 className="text-5xl text-white mb-2" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
-              <p className="text-white/70 text-lg mt-1">90 seconds / 3 lives</p>
-              {highScore > 0 && <p className="text-yellow-400 text-base font-bold mt-6">🏆 Best: {highScore}</p>}
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-8 bg-black/60">
+            <div className="text-center flex flex-col gap-2">
+              <h2 className="text-5xl text-white" style={{ fontFamily: "var(--font-erica-one)" }}>Ready?</h2>
+              <p className="text-white/70 text-lg">90 seconds / 3 lives</p>
+              {highScore > 0 && <p className="text-yellow-400 text-base font-bold">🏆 Best: {highScore}</p>}
             </div>
-            <button onClick={startGame}
-              className="mt-4 px-8 py-3 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-lg transition-colors">
-              Play!
-            </button>
-            <button onClick={exitGame}
-              className="flex items-center gap-1.5 text-white/60 hover:text-white text-base transition-colors">
-              <LogOut className="w-3.5 h-3.5" />Exit game
-            </button>
+            <div className="flex flex-col items-center gap-4">
+              <button onClick={startGame}
+                className="px-12 py-4 rounded-xl bg-pink-500 hover:bg-pink-400 text-white font-bold text-xl transition-colors">
+                Play!
+              </button>
+              <button onClick={exitGame}
+                className="flex items-center gap-1.5 text-white/60 hover:text-white text-base transition-colors">
+                <LogOut className="w-3.5 h-3.5" />Exit game
+              </button>
+            </div>
           </div>
         )}
 
@@ -804,16 +819,24 @@ export function EasterFrenzy() {
                 {submitError && <p className="text-red-400 text-xs text-center">{submitError}</p>}
 
                 {leaderboard.length > 0 && (
-                  <div className="w-full rounded-xl overflow-hidden" style={{ background: "linear-gradient(135deg, #4a0e2b 0%, #2d0a47 50%, #0a2540 100%)" }}>
-                    <p className="text-pink-300/70 text-xs font-bold uppercase tracking-widest text-center py-2 border-b border-white/10">Top Scores</p>
-                    {leaderboard.map((entry, i) => (
-                      <div key={entry.id} className={`flex items-center justify-between px-4 py-2 text-sm ${i === 0 ? "bg-yellow-400/10" : ""}`}>
-                        <span className={`w-5 font-bold ${i === 0 ? "text-yellow-400" : "text-pink-300/40"}`}>{i + 1}</span>
-                        <span className="text-white flex-1 truncate mx-3">{entry.name}</span>
-                        <span className="text-pink-200 font-bold tabular-nums">{entry.score}</span>
+                  <>
+                    <div className="w-full border-t border-white/15 pt-1" />
+                    <div className="w-full rounded-xl overflow-hidden" style={{ background: "rgba(60,0,100,0.75)", backdropFilter: "blur(8px)", border: "1px solid rgba(168,85,247,0.3)" }}>
+                      <p className="text-purple-300/80 text-sm font-bold uppercase tracking-widest text-center py-3 border-b border-purple-500/20">Top Scores</p>
+                      <div className="relative">
+                        <div className="max-h-48 overflow-y-auto">
+                          {leaderboard.map((entry, i) => (
+                            <div key={entry.id} className={`flex items-center justify-between px-4 py-2.5 text-base ${i === 0 ? "bg-yellow-400/10" : ""}`}>
+                              <span className={`w-6 font-bold ${i === 0 ? "text-yellow-400" : "text-purple-300/50"}`}>{i + 1}</span>
+                              <span className="text-white flex-1 truncate mx-3">{entry.name}</span>
+                              <span className="text-purple-200 font-bold tabular-nums">{entry.score}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="absolute bottom-0 inset-x-0 h-8 pointer-events-none" style={{ background: "linear-gradient(to bottom, transparent, rgba(60,0,100,0.9))" }} />
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  </>
                 )}
               </div>
 

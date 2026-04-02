@@ -238,7 +238,7 @@ export function EasterFrenzy() {
   }, [playerName, score, gameTime, submitting])
 
   // ── Spawn ──────────────────────────────────────────────────────────────────
-  const spawnFruit = useCallback((canvas: HTMLCanvasElement) => {
+  const spawnFruit = useCallback((W: number) => {
     const diff    = getDifficulty(gameTimeRef.current)
     const isFrenzy = frenzyEndTimeRef.current > 0
     const isCandy  = Math.random() < diff.candyChance
@@ -247,6 +247,7 @@ export function EasterFrenzy() {
     const isShiny   = !isCandy && !isPowerup && roll < POWERUP_CHANCE + SHINY_CHANCE
     const speed     = diff.speed * (0.8 + Math.random() * 0.4) * (isFrenzy ? 1.3 : 1)
     const spawnSz   = isCandy ? EMOJI_SIZE : EGG_SIZE
+    const maxWobble = Math.min(20, W * 0.04)
 
     let imageSrc: string | null = null
     let emoji = ""
@@ -254,7 +255,7 @@ export function EasterFrenzy() {
       emoji = CANDIES[Math.floor(Math.random() * CANDIES.length)]
     } else {
       const colorName = isPowerup
-        ? "blue"  // power-ups always use the blue egg base
+        ? "blue"
         : ALL_EGG_COLORS[Math.floor(Math.random() * ALL_EGG_COLORS.length)]
       const pool = EGG_POOL[colorName]
       imageSrc = pool[Math.floor(Math.random() * pool.length)]
@@ -263,11 +264,11 @@ export function EasterFrenzy() {
     fruitsRef.current.push({
       id: nextFruitId.current++,
       imageSrc, emoji,
-      x: spawnSz + Math.random() * (canvas.width - spawnSz * 2),
+      x: spawnSz + Math.random() * (W - spawnSz * 2),
       y: -spawnSz,
       speed,
       wobble: Math.random() * Math.PI * 2,
-      wobbleAmp: 20 + Math.random() * 30,
+      wobbleAmp: maxWobble,
       eaten: false, eatAnim: 0,
       isCandy, isShiny, isPowerup,
     })
@@ -369,7 +370,7 @@ export function EasterFrenzy() {
       const maxF  = isFrenzy ? diff.maxFruits * 2 : diff.maxFruits
       const active = fruitsRef.current.filter(f => !f.eaten && f.y < H).length
       if (active < maxF && spawnCoolRef.current <= 0) {
-        spawnFruit(canvas)
+        spawnFruit(W)
         const coolBase = isFrenzy ? diff.spawnCool * 0.4 : diff.spawnCool
         spawnCoolRef.current = coolBase * (0.7 + Math.random() * 0.6)
       }
@@ -382,7 +383,8 @@ export function EasterFrenzy() {
         if (!fruit.eaten) {
           fruit.y      += fruit.speed * dt * 60 * slowFactor
           fruit.wobble += dt * 1.2 * slowFactor
-          const fx = fruit.x + Math.sin(fruit.wobble) * fruit.wobbleAmp
+          const rawFx = fruit.x + Math.sin(fruit.wobble) * fruit.wobbleAmp
+          const fx = Math.max(size / 2, Math.min(W - size / 2, rawFx))
           const dist = Math.sqrt((fx - mouthX) ** 2 + (fruit.y - mouthY) ** 2)
 
           if (dist < CATCH_RADIUS && mouthOpen) {
